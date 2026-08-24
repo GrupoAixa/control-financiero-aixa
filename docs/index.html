@@ -171,6 +171,8 @@ tfoot td{border-top:1px solid var(--line);border-bottom:0;font-weight:700;backgr
 .mini{font-family:var(--mono);font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
 .big-note{background:var(--plano-soft);border:1px solid #C9E1EA;border-left:3px solid var(--plano);border-radius:var(--r);padding:12px 14px;font-size:13px}
 .big-note b{font-weight:600}
+.big-note.ok{background:var(--verde-soft);border-color:#C6E3D9;border-left-color:var(--verde)}
+.big-note.bad{background:var(--rojo-soft);border-color:#F0CFCA;border-left-color:var(--rojo)}
 
 .filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
 .filters select,.filters input{border:1px solid var(--line);border-radius:var(--r);padding:6px 9px;background:var(--surface);font-size:13px}
@@ -331,6 +333,12 @@ function analizarObra(o){
   const margen = cobrado - costoTot;
   const rent = cobrado>0 ? margen/cobrado*100 : null;      // rentabilidad sobre venta
   const roi  = costoTot>0 ? margen/costoTot*100 : null;    // retorno sobre lo invertido
+  // Meta de rentabilidad (ROI) elegida para esta obra: 0 o vacío = sin meta fijada
+  const metaRoi = num(o.metaRoi)||0;
+  const brechaRoi = (metaRoi>0 && roi!=null) ? roi-metaRoi : null;          // puntos porcentuales vs la meta
+  const metaCumplida = brechaRoi==null ? null : brechaRoi>=0;
+  const margenObjetivo = metaRoi>0 ? costoTot*metaRoi/100 : null;          // margen que hacía falta para cumplirla
+  const brechaMonto = margenObjetivo!=null ? margen-margenObjetivo : null; // diferencia en pesos
   const desvio = presup>0 ? (cobrado-presup)/presup*100 : null;
   const desvioCosto = presup>0 ? costoTot/presup*100 : null;
   const adelantos = ing.filter(x=>x.tipo==='Adelanto');
@@ -373,6 +381,7 @@ function analizarObra(o){
     : (margen>0 ? 'La obra se financió sola: no hay TIR clásica' : 'Los flujos no permiten calcularla'));
 
   return {ing,cos,cobrado,costoTot,costoPagado,porPagar,presup,margen,rent,roi,desvio,desvioCosto,
+          metaRoi,brechaRoi,metaCumplida,margenObjetivo,brechaMonto,
           adelanto,pctAdelanto,plazoEjec,plazoEjecPrev,atraso,cobroDesdeAcep,pagoDesdeAcep,brecha,
           cobroDesdeEntrega,plazoProv,flows,caja,van,tir,cobrable,payback,entrega,retAnual,tirNota,diasCiclo};
 }
@@ -844,30 +853,58 @@ function reglaPlazos(o,a){
   if(o.fechaAceptacion) marks.push({d:o.fechaAceptacion,l:'Aceptación',c:'var(--ink)',tipo:'hito'});
   if(o.fechaEntregaPrev) marks.push({d:o.fechaEntregaPrev,l:'Entrega prevista',c:'var(--muted-2)',tipo:'hito'});
   if(o.fechaEntrega) marks.push({d:o.fechaEntrega,l:'Entrega real',c:'var(--plano)',tipo:'hito'});
-  a.ing.forEach(i=>marks.push({d:i.fecha,l:i.tipo+' '+money(i.monto),c:'var(--verde)',tipo:'cobro',m:num(i.monto)}));
+  a.ing.forEach(i=>marks.push({d:i.fecha,l:(i.tipo||'Cobro')+' '+money(i.monto),c:'var(--verde)',tipo:'cobro',m:num(i.monto)}));
   a.cos.filter(c=>c.pagado&&c.fechaPago).forEach(c=>marks.push({d:c.fechaPago,l:'Pago '+money(c.monto),c:'var(--obra)',tipo:'pago',m:num(c.monto)}));
   const valid = marks.filter(m=>m.d);
   if(valid.length<2) return `<div class="regla"><p class="mini">Cargá la fecha de aceptación y al menos un cobro o pago para ver la línea de tiempo.</p></div>`;
+
   const ts = valid.map(m=>dt(m.d).getTime());
   const min=Math.min(...ts), max=Math.max(...ts), span=(max-min)||DAY;
-  const w=760, pad=20, h=118, axis=64;
+  const w=760, pad=26;
   const X = t => pad + (t-min)/span*(w-pad*2);
   const totalDias = Math.round(span/DAY);
+
+  // Cada etiqueta se acorta y se ubica en el primer "carril" vertical libre de su lado
+  // (arriba: hitos y cobros · abajo: pagos), de modo que nunca se superpone con la anterior.
+  const FONT=8.5, CHAR_W=5.1, MAXCH=24;
+  const marcados = valid.map(m=>{
+    const up = m.tipo!=='pago';
+    const x = X(dt(m.d).getTime());
+    const label = m.l.length>MAXCH ? m.l.slice(0,MAXCH-1)+'…' : m.l;
+    return {...m, up, x, label, half: label.length*CHAR_W/2+5};
+  });
+  function asignarCarriles(list){
+    const ord=[...list].sort((p,q)=>p.x-q.x);
+    const bordes=[];
+    ord.forEach(it=>{
+      const izq=it.x-it.half, der=it.x+it.half;
+      let lane=bordes.findIndex(b=>b<izq);
+      if(lane===-1){ lane=bordes.length; bordes.push(der); } else bordes[lane]=der;
+      it.lane=lane;
+    });
+    return bordes.length;
+  }
+  const arriba = marcados.filter(m=>m.up), abajo = marcados.filter(m=>!m.up);
+  const lanesArriba = Math.max(asignarCarriles(arriba),1);
+  const lanesAbajo = Math.max(asignarCarriles(abajo),1);
+
+  const rowH=14, stub=12, tickH=16;
+  const axis = 10 + stub + lanesArriba*rowH;
+  const h = axis + stub + tickH + (abajo.length?lanesAbajo*rowH:0) + 12;
+
   // ticks cada ~ n días
   const step = totalDias>360?90:totalDias>120?30:totalDias>60?15:totalDias>20?7:2;
   let ticks='';
   for(let dd=0; dd<=totalDias; dd+=step){
     const x=X(min+dd*DAY);
-    ticks+=`<line x1="${x}" y1="${axis}" x2="${x}" y2="${axis+6}" stroke="var(--line)"/><text x="${x}" y="${axis+18}" font-size="8.5" fill="var(--muted-2)" text-anchor="middle" font-family="var(--mono)">${dd}</text>`;
+    ticks+=`<line x1="${x}" y1="${axis}" x2="${x}" y2="${axis+5}" stroke="var(--line)"/><text x="${x}" y="${axis+tickH-2}" font-size="8" fill="var(--muted-2)" text-anchor="middle" font-family="var(--mono)">${dd}</text>`;
   }
-  const body = valid.map((m,i)=>{
-    const x=X(dt(m.d).getTime());
-    const up = m.tipo!=='pago';
-    const y = up? axis-10 : axis+10;
-    const y2 = up? axis-26-((i%2)*13) : axis+28+((i%2)*13);
-    return `<line x1="${x}" y1="${axis}" x2="${x}" y2="${y2}" stroke="${m.c}" stroke-width="1"/>
-      <circle cx="${x}" cy="${axis}" r="3.4" fill="${m.c}"/>
-      <text x="${x}" y="${up?y2-4:y2+9}" font-size="8.5" fill="var(--muted)" text-anchor="middle" font-family="var(--mono)">${esc(m.l.length>22?m.l.slice(0,21)+'…':m.l)}</text>`;
+  const body = marcados.map(m=>{
+    const y2 = m.up ? axis-stub-m.lane*rowH : axis+stub+tickH+m.lane*rowH;
+    const ty = m.up ? y2-3 : y2+8;
+    return `<line x1="${m.x}" y1="${axis}" x2="${m.x}" y2="${y2}" stroke="${m.c}" stroke-width="1"/>
+      <circle cx="${m.x}" cy="${axis}" r="3.2" fill="${m.c}"/>
+      <text x="${m.x}" y="${ty}" font-size="${FONT}" fill="var(--muted)" text-anchor="middle" font-family="var(--mono)">${esc(m.label)}<title>${esc(fdate(m.d)+' · '+m.l)}</title></text>`;
   }).join('');
   return `<div class="regla">
     <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">
@@ -894,7 +931,7 @@ const NAV = [
     {k:'config', l:'Ajustes y datos', i:'conf'}
   ]}
 ];
-let R = {v:'panel', id:null, tab:null, filtro:{anio:'todos'}};
+let R = {v:'panel', id:null, tab:null, filtro:{anio:'todos', mes:'todos'}};
 
 function renderNav(){
   $('#nav').innerHTML = NAV.map(g=>`<div class="grp">${g.g}</div>`+g.items.map(it=>
@@ -931,11 +968,17 @@ function aniosDisponibles(){
   D().costos.forEach(x=>x.fecha&&s.add(x.fecha.slice(0,4)));
   return [...s].sort().reverse();
 }
-function enAnio(f){ return R.filtro.anio==='todos' || (f||'').slice(0,4)===R.filtro.anio; }
+const NOMBRES_MES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+function enPeriodo(f){
+  if(!f) return false;
+  const okA = R.filtro.anio==='todos' || f.slice(0,4)===R.filtro.anio;
+  const okM = R.filtro.mes==='todos' || f.slice(5,7)===R.filtro.mes;
+  return okA && okM;
+}
 
 function vPanel(){
-  const ing = D().ingresos.filter(x=>enAnio(x.fecha));
-  const cos = D().costos.filter(x=>enAnio(x.fecha));
+  const ing = D().ingresos.filter(x=>enPeriodo(x.fecha));
+  const cos = D().costos.filter(x=>enPeriodo(x.fecha));
   const totI = ing.reduce((s,x)=>s+num(x.monto),0);
   const totC = cos.reduce((s,x)=>s+num(x.monto),0);
   const fijoMes = totalFijoMensual();
@@ -965,6 +1008,8 @@ function vPanel(){
   <div class="filters">
     <span class="mini">Período</span>
     <select id="fAnio"><option value="todos">Todos los años</option>${aniosDisponibles().map(a=>`<option value="${a}" ${R.filtro.anio===a?'selected':''}>${a}</option>`).join('')}</select>
+    <select id="fMes"><option value="todos">Todos los meses</option>${NOMBRES_MES.map((n,i)=>{const v=String(i+1).padStart(2,'0');return `<option value="${v}" ${R.filtro.mes===v?'selected':''}>${n}</option>`;}).join('')}</select>
+    ${(R.filtro.anio!=='todos'||R.filtro.mes!=='todos')?`<button class="btn sm" id="fLimpiar">Quitar filtro</button>`:''}
     <span class="chip">${mesesCant} ${mesesCant===1?'mes':'meses'} con movimientos</span>
   </div>
 
@@ -1008,6 +1053,8 @@ function vPanel(){
   </div>`;
 
   $('#fAnio').onchange = e => { R.filtro.anio=e.target.value; render(); };
+  $('#fMes').onchange = e => { R.filtro.mes=e.target.value; render(); };
+  $('#fLimpiar')?.addEventListener('click', ()=>{ R.filtro.anio='todos'; R.filtro.mes='todos'; render(); });
   $('#qIng').onclick = ()=> menuCarga();
 }
 
@@ -1058,6 +1105,7 @@ function vObras(){
       {h:'Margen', num:1, v:r=>money(r.__a.margen), cls:r=>sign(r.__a.margen)},
       {h:'Rent.', num:1, v:r=>r.__a.rent!=null?pct(r.__a.rent,1):'—', cls:r=>sign(r.__a.rent)},
       {h:'ROI', num:1, v:r=>r.__a.roi!=null?pct(r.__a.roi,1):'—', cls:r=>sign(r.__a.roi)},
+      {h:'Meta ROI', num:1, v:r=>r.__a.metaRoi>0?(r.__a.brechaRoi==null?`Meta ${pct(r.__a.metaRoi,0)}`:`${r.__a.metaCumplida?'✓':'✗'} ${r.__a.brechaRoi>=0?'+':''}${pct(r.__a.brechaRoi,1)}`):'—', cls:r=>r.__a.metaRoi>0&&r.__a.brechaRoi!=null?(r.__a.metaCumplida?'pos':'neg'):'neu'},
       {h:'Ejecución', num:1, v:r=>days(r.__a.plazoEjec)},
       {h:'Cobro', num:1, v:r=>days(r.__a.cobroDesdeEntrega)}
     ], rows, {actions:true, onRow:true,
@@ -1065,7 +1113,7 @@ function vObras(){
       emptyText:'Una obra agrupa su presupuesto, sus cobros y todos sus costos. Es la unidad de análisis del sistema.',
       emptyBtn:`<button class="btn pri" data-new>${icon('add')} Crear la primera obra</button>`,
       foot:[{v:'Totales'},{v:''},{v:''},{v:money(tot.p),cls:'num'},{v:money(tot.i),cls:'num'},{v:money(tot.c),cls:'num'},
-            {v:money(tot.m),cls:'num '+sign(tot.m)},{v:tot.i>0?pct(tot.m/tot.i*100):'—',cls:'num'},{v:tot.c>0?pct(tot.m/tot.c*100):'—',cls:'num'},{v:''},{v:''},{v:''}]
+            {v:money(tot.m),cls:'num '+sign(tot.m)},{v:tot.i>0?pct(tot.m/tot.i*100):'—',cls:'num'},{v:tot.c>0?pct(tot.m/tot.c*100):'—',cls:'num'},{v:''},{v:''},{v:''},{v:''}]
     })}
   </div>`;
 
@@ -1090,12 +1138,13 @@ function delObra(id){
 }
 
 function formObra(o){
-  openForm({title:o?'Editar obra':'Nueva obra', wide:true, values:o||{estado:'Presupuestada',fechaAceptacion:today()},
+  openForm({title:o?'Editar obra':'Nueva obra', wide:true, values:o||{estado:'Presupuestada',fechaAceptacion:today(),metaRoi:num(D().config.margenObj)||25},
     fields:[
       {k:'nombre', l:'Nombre de la obra', req:1, full:1, ph:'Ej: Ampliación depósito Ruta 8'},
       {k:'cliente', l:'Cliente'},
       {k:'estado', l:'Estado', t:'select', opts:ESTADOS},
       {k:'presupuesto', l:'Monto presupuestado', t:'number', hint:'Lo que se cotizó y el cliente aceptó'},
+      {k:'metaRoi', l:'Meta de rentabilidad (ROI %)', t:'number', hint:'Retorno objetivo sobre el costo invertido. Dejalo en 0 si no querés fijar una meta para esta obra.'},
       {k:'ubicacion', l:'Ubicación'},
       {k:'fechaAceptacion', l:'Fecha de aceptación', t:'date', hint:'Arranca el reloj de la obra'},
       {k:'fechaEntregaPrev', l:'Entrega prevista', t:'date'},
@@ -1207,6 +1256,8 @@ function obraResumen(o,a){
     ${kpi('Margen', money(a.margen), a.rent!=null?'Rentabilidad '+pct(a.rent):'—', sign(a.margen))}
   </div>
 
+  ${metaBanner(a)}
+
   <div class="card" style="margin-bottom:16px">
     <div class="card-h"><h2>Línea de tiempo de la obra</h2><span class="sub">hitos, cobros y pagos</span></div>
     <div class="card-b">${reglaPlazos(o,a)}</div>
@@ -1239,6 +1290,18 @@ function obraResumen(o,a){
   ${o.notas?`<div class="card" style="margin-top:16px"><div class="card-h"><h2>Notas</h2></div><div class="card-b" style="white-space:pre-wrap;font-size:13.5px">${esc(o.notas)}</div></div>`:''}`;
 }
 function fila(k,v){ return `<tr><td style="color:var(--muted);font-size:12.5px">${k}</td><td class="num" style="font-weight:600">${v}</td></tr>`; }
+
+// Banner ejecutivo: ¿la obra llegó a la rentabilidad (ROI) que le pediste?
+function roiCls(a){ return a.metaRoi>0 ? (a.metaCumplida?'pos':'neg') : sign(a.roi); }
+function metaBanner(a){
+  if(!(a.metaRoi>0)) return '';
+  if(a.roi==null) return `<div class="big-note" style="margin-bottom:16px">Meta de rentabilidad fijada en <b>${pct(a.metaRoi,0)}</b> de ROI. Todavía no hay margen para medirla: cargá cobros y costos con fecha.</div>`;
+  const puntos = pct(Math.abs(a.brechaRoi),1);
+  const monto = money(Math.abs(a.brechaMonto));
+  return a.metaCumplida
+    ? `<div class="big-note ok" style="margin-bottom:16px"><b>Meta de rentabilidad cumplida.</b> Pediste ${pct(a.metaRoi,0)} de ROI y la obra dio ${pct(a.roi,1)}: ${puntos} puntos por encima del objetivo, equivalentes a ${monto} de margen extra.</div>`
+    : `<div class="big-note bad" style="margin-bottom:16px"><b>Meta de rentabilidad no alcanzada.</b> Pediste ${pct(a.metaRoi,0)} de ROI y la obra dio ${pct(a.roi,1)}: ${puntos} puntos por debajo del objetivo, equivalentes a ${monto} de margen que faltó.</div>`;
+}
 
 function obraIngresos(o,a){
   const rows = a.ing.map(x=>({...x,__id:x.id})).sort((x,y)=>x.fecha<y.fecha?-1:1);
@@ -1283,11 +1346,13 @@ function obraDash(o,a){
 
   return `
   <div class="grid g4" style="margin-bottom:16px">
-    ${kpi('ROI de la obra', a.roi!=null?pct(a.roi):'—', 'Margen sobre costo invertido', sign(a.roi),'acc')}
+    ${kpi('ROI de la obra', a.roi!=null?pct(a.roi):'—', a.metaRoi>0?`Meta ${pct(a.metaRoi,0)} · ${a.metaCumplida?'cumplida':'no alcanzada'}`:'Margen sobre costo invertido', roiCls(a),'acc')}
     ${kpi('VAN', a.van!=null?money(a.van):'—', `Al ${pct(tasa,0)} anual`, sign(a.van),'acc-b')}
     ${kpi('TIR anual', a.tir!=null?pct(a.tir*100):'—', a.tir!=null?(a.tir*100>tasa?'Supera la tasa exigida':'Por debajo de la tasa exigida'):a.tirNota, a.tir!=null?(a.tir*100>tasa?'pos':'neg'):'')}
     ${kpi('Recupero (payback)', days(a.payback), 'Desde el primer movimiento')}
   </div>
+
+  ${metaBanner(a)}
 
   <div class="grid g4" style="margin-bottom:16px">
     ${kpi('Plazo de cobro', days(a.cobroDesdeAcep), 'Días promedio ponderados desde la aceptación')}
@@ -1310,6 +1375,8 @@ function obraDash(o,a){
       ${fila('Margen bruto', `<span class="${sign(a.margen)}">${money(a.margen)}</span>`)}
       ${fila('Rentabilidad sobre venta', a.rent!=null?pct(a.rent):'—')}
       ${fila('Retorno sobre inversión (ROI)', a.roi!=null?pct(a.roi):'—')}
+      ${a.metaRoi>0?fila('Meta de rentabilidad (ROI)', pct(a.metaRoi,0)):''}
+      ${a.metaRoi>0&&a.brechaRoi!=null?fila('Diferencia vs. la meta', `<span class="${a.metaCumplida?'pos':'neg'}">${a.brechaRoi>=0?'+':''}${pct(a.brechaRoi,1)} · ${a.brechaMonto>=0?'+':''}${money(a.brechaMonto)}</span>`):''}
       ${fila('Estructura absorbida ('+days(a.plazoEjec)+')', cargaFija!=null?money(cargaFija):'—')}
       ${fila('Margen neto estimado', margenNeto!=null?`<span class="${sign(margenNeto)}">${money(margenNeto)}</span>`:'—')}
       ${fila('Markup sobre costo', a.costoTot>0?pct(a.cobrado/a.costoTot*100-100):'—')}
@@ -1318,7 +1385,8 @@ function obraDash(o,a){
     </tbody></table></div></div>
 
     <div class="card"><div class="card-h"><h2>Cómo se lee</h2></div><div class="card-b" style="font-size:13px;color:var(--muted);line-height:1.6">
-      <p><b style="color:var(--text)">VAN</b>: valor de la obra hoy, descontando cada cobro y cada pago por el tiempo que tardó. Positivo = la obra rindió más que la tasa que le exigís al dinero.</p>
+      <p><b style="color:var(--text)">Meta de rentabilidad (ROI)</b>: la fijás vos en "Editar obra". El sistema compara el ROI real contra esa meta y te dice si la cumpliste, por cuántos puntos y por cuántos pesos de margen.</p>
+      <p style="margin-top:9px"><b style="color:var(--text)">VAN</b>: valor de la obra hoy, descontando cada cobro y cada pago por el tiempo que tardó. Positivo = la obra rindió más que la tasa que le exigís al dinero.</p>
       <p style="margin-top:9px"><b style="color:var(--text)">TIR</b>: la tasa anual que efectivamente rindió la plata puesta en la obra. Compará contra un plazo fijo o el costo de tu financiación.</p>
       <p style="margin-top:9px"><b style="color:var(--text)">Capital de trabajo</b>: el bache máximo de caja. Es la plata que necesitás tener disponible para bancar la obra hasta cobrar.</p>
       <p style="margin-top:9px"><b style="color:var(--text)">Retorno anualizado sobre capital inmovilizado</b>: si en la obra pusiste $1 de tu bolsillo y recuperaste $1,20 en 90 días, tu plata rindió mucho más que ese 20%: este número lo lleva a tasa anual. Es la mejor comparación contra un plazo fijo cuando la TIR no se puede calcular.</p>
