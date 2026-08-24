@@ -1296,7 +1296,7 @@ function roiCls(a){ return a.metaRoi>0 ? (a.metaCumplida?'pos':'neg') : sign(a.r
 function metaBanner(a){
   if(!(a.metaRoi>0)) return '';
   if(a.roi==null) return `<div class="big-note" style="margin-bottom:16px">Meta de rentabilidad fijada en <b>${pct(a.metaRoi,0)}</b> de ROI. Todavía no hay margen para medirla: cargá cobros y costos con fecha.</div>`;
-  const puntos = pct(Math.abs(a.brechaRoi),1);
+  const puntos = Math.abs(a.brechaRoi).toFixed(1).replace('.',',');
   const monto = money(Math.abs(a.brechaMonto));
   return a.metaCumplida
     ? `<div class="big-note ok" style="margin-bottom:16px"><b>Meta de rentabilidad cumplida.</b> Pediste ${pct(a.metaRoi,0)} de ROI y la obra dio ${pct(a.roi,1)}: ${puntos} puntos por encima del objetivo, equivalentes a ${monto} de margen extra.</div>`
