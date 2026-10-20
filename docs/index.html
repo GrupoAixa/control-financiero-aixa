@@ -153,6 +153,25 @@ tfoot td{border-top:1px solid var(--line);border-bottom:0;font-weight:700;backgr
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(70px);background:var(--ink);color:#fff;padding:11px 18px;border-radius:var(--r);font-size:13px;z-index:200;opacity:0;transition:.22s;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,.2)}
 .toast.on{opacity:1;transform:translateX(-50%)}
 .toast.bad{background:var(--rojo)}
+/* Pantalla de ingreso: mientras no hay sesión, la app no se muestra */
+body.bloqueado .app{display:none}
+.login{display:none}
+body.bloqueado .login{display:flex;min-height:100vh;align-items:center;justify-content:center;padding:32px 16px;background:var(--ink)}
+.login-card{width:100%;max-width:400px;background:var(--surface);border-radius:var(--r-lg);overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.35)}
+.login-h{background:var(--ink-2);color:#fff;padding:22px 24px;display:flex;align-items:center;gap:12px}
+.login-h img{width:40px;height:40px;border-radius:6px;background:#000;object-fit:contain;flex:none}
+.login-h b{font-family:var(--cond);font-size:19px;font-weight:700;display:block;line-height:1.15}
+.login-h small{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#9FB3BC}
+.login-b{padding:22px 24px}
+.login-b .btn{justify-content:center}
+.login-b .btn.pri{width:100%;padding:10px 12px;font-size:14px}
+.login-err{background:var(--rojo-soft);border-left:3px solid var(--rojo);color:var(--rojo);font-size:12.5px;padding:9px 11px;border-radius:var(--r);margin-bottom:14px}
+.login-cfg{border:1px solid var(--line-2);background:var(--surface-2);border-radius:var(--r);padding:12px 12px 2px;margin-bottom:14px}
+.login-cfg p{font-size:12px;color:var(--muted);margin-bottom:10px}
+.login-links{display:flex;justify-content:space-between;gap:10px;margin-top:12px;flex-wrap:wrap}
+.login-links button{background:none;border:0;color:var(--plano);font-size:12.5px;cursor:pointer;padding:2px 0}
+.login-links button:hover{text-decoration:underline}
+.login-wait{padding:34px 24px;text-align:center;color:var(--muted);font-size:13.5px}
 
 /* Vacío */
 .empty{text-align:center;padding:48px 20px;color:var(--muted)}
@@ -193,7 +212,8 @@ tfoot td{border-top:1px solid var(--line);border-bottom:0;font-weight:700;backgr
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
-<body>
+<body class="bloqueado">
+<div class="login" id="login"><div class="login-card"><div class="login-wait">Cargando…</div></div></div>
 <div class="app">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
@@ -204,6 +224,7 @@ tfoot td{border-top:1px solid var(--line);border-bottom:0;font-weight:700;backgr
     <div class="sidefoot">
       <span id="storeInfo" style="cursor:pointer" title="Ir a Ajustes">Solo en este equipo</span>
       <button data-act="backup">Respaldo</button>
+      <button data-act="salir" title="Cerrar sesión">Salir</button>
     </div>
   </aside>
   <div class="main">
@@ -273,8 +294,8 @@ const Store = {
     }
     return this.data;
   },
-  save(silencioso){
-    this.data.updatedAt = Date.now();
+  save(silencioso, fecha){
+    this.data.updatedAt = fecha || Date.now();
     try{ localStorage.setItem(KEY, JSON.stringify(this.data)); }
     catch(e){ toast('No se pudo guardar: almacenamiento lleno', true); }
     if(!silencioso) Cloud.programarSubida();
@@ -549,18 +570,32 @@ function proyectarCaja(horizonte=90){
    El sitio sigue siendo estático (GitHub Pages): Firebase se carga
    desde el navegador y no hace falta ningún servidor propio.
    ========================================================= */
+// Datos de conexión del proyecto de Firebase. No son secretos (Firebase los expone en cualquier app web):
+// la protección real son las cuentas y las reglas de Firestore. Si se completan acá, cada equipo
+// solo tiene que poner email y contraseña; si quedan vacíos, la pantalla de ingreso los pide una vez.
+const CONEXION = {apiKey:'', projectId:'', appId:'', authDomain:'', empresaId:''};
+const KEY_DUENO = 'obracontrol.dueno';   // de qué usuario y empresa son los datos guardados en este equipo
+
 const Cloud = {
   KEYC:'obracontrol.cloud',
   cfg:null, app:null, auth:null, db:null, fb:null, user:null, estado:'off', timer:null, subiendo:false,
-  desuscribir:null,
+  desuscribir:null, entrando:false,
   equipo(){ let id=localStorage.getItem('obracontrol.equipo'); if(!id){ id=uid(); localStorage.setItem('obracontrol.equipo',id); } return id; },
   empresaId(){ return (this.cfg && this.cfg.empresaId) ? this.cfg.empresaId : 'principal'; },
   // Firestore admite hasta 1 MiB por documento; dejamos margen para los demás campos
   LIMITE:1000000, AVISO:800000,
 
-  leerCfg(){ try{ this.cfg = JSON.parse(localStorage.getItem(this.KEYC)||'null'); }catch(e){ this.cfg=null; } return this.cfg; },
+  fija(){ return !!(CONEXION.apiKey && CONEXION.projectId); },
+  leerCfg(){
+    let c=null;
+    try{ c = JSON.parse(localStorage.getItem(this.KEYC)||'null'); }catch(e){}
+    if(this.fija()){
+      c = Object.assign(esObj(c)?c:{}, ...Object.entries(CONEXION).filter(([,v])=>v).map(([k,v])=>({[k]:v})));
+    }
+    this.cfg = esObj(c) ? c : null;
+    return this.cfg;
+  },
   guardarCfg(c){ this.cfg=c; localStorage.setItem(this.KEYC, JSON.stringify(c)); },
-  olvidarCfg(){ this.cfg=null; localStorage.removeItem(this.KEYC); this.user=null; this.setEstado('off'); },
   activa(){ return !!(this.cfg && this.cfg.apiKey && this.cfg.projectId); },
 
   setEstado(e){
@@ -584,7 +619,8 @@ const Cloud = {
     return true;
   },
 
-  async init({silencioso=true}={}){
+  async init(){
+    if(this.auth) return !!this.user;
     if(!this.leerCfg() || !this.activa()){ this.setEstado('off'); return false; }
     try{
       this.setEstado('conectando');
@@ -599,25 +635,70 @@ const Cloud = {
       return await new Promise(res=>{
         let resuelto=false;
         this.fb.onAuthStateChanged(this.auth, async u=>{
+          const habia=this.user;
           this.user=u||null;
-          if(u){ this.setEstado('conectado'); await this.bajar({auto:true}); this.escuchar(); }
-          else this.setEstado('sinsesion');
+          if(u){
+            Acceso.cargando('Cargando datos…');
+            try{
+              await this.sincronizarAlEntrar();
+              this.setEstado('conectado');
+              this.escuchar();
+              Acceso.abrir();
+            }catch(e){
+              Acceso.error = e.code==='permission-denied'
+                ? 'Tu cuenta no tiene permiso para ver estos datos. Pedile al administrador que agregue tu mail a las reglas de Firestore.'
+                : 'No se pudieron cargar los datos: '+(e.code||e.message);
+              this.user=null;                                  // no llegó a entrar: no borrar lo que hay en el equipo
+              await this.fb.signOut(this.auth);
+            }
+          } else {
+            this.setEstado('sinsesion');
+            if(habia) this.limpiarEquipo();                  // la sesión se cerró o venció: no dejar datos acá
+            if(!this.entrando) Acceso.mostrar();
+          }
           if(!resuelto){ resuelto=true; res(!!u); }
         });
       });
     }catch(e){
       this.setEstado('error');
-      if(!silencioso) toast('No se pudo conectar con la nube: '+e.message, true);
+      this.auth=null;
+      Acceso.mostrar('No se pudo conectar con el servidor. Revisá la conexión a internet y los datos de conexión.');
       return false;
     }
   },
 
+  // Al entrar, la nube manda. Solo se suben los datos del equipo si son de este mismo usuario y empresa
+  // y quedaron cambios sin subir, o si la nube todavía está vacía (primera vez).
+  async sincronizarAlEntrar(){
+    const dueno = this.user.uid+'|'+this.empresaId();
+    const mio = localStorage.getItem(KEY_DUENO)===dueno;
+    const tieneLocal = COLS.some(k=>Store.data[k].length);
+    const snap = await this.fb.getDoc(this.ref());
+    if(snap.exists()){
+      const d=snap.data();
+      if(mio && (Store.data.updatedAt||0) > (d.updatedAt||0)) await this.subir({auto:true});
+      else {
+        if(!mio && tieneLocal) exportar('previo-al-ingreso');   // datos viejos de este equipo: se guardan por las dudas
+        this.aplicar(d.payload);
+      }
+    } else if(tieneLocal){
+      await this.subir({auto:true});
+    }
+    localStorage.setItem(KEY_DUENO, dueno);
+  },
+
+  limpiarEquipo(){
+    [KEY, KEY+'.danado', KEY_DUENO].forEach(k=>localStorage.removeItem(k));
+    Store.data=structuredClone(DEF);
+  },
+
   async entrar(email, pass){
-    await this.cargarSDK();
-    if(!this.auth) await this.init({silencioso:false});
-    // Las cuentas se crean a mano en la consola de Firebase: la app nunca registra usuarios nuevos,
-    // así nadie puede crearse una cuenta con un mail autorizado que todavía no se usó.
+    this.entrando=true;
     try{
+      await this.init();
+      if(!this.auth) return false;
+      // Las cuentas se crean a mano en la consola de Firebase: la app nunca registra usuarios nuevos,
+      // así nadie puede crearse una cuenta con un mail autorizado que todavía no se usó.
       await this.fb.signInWithEmailAndPassword(this.auth, email, pass);
       return true;
     }catch(e){
@@ -631,15 +712,18 @@ const Cloud = {
         'auth/network-request-failed':'sin conexión a internet'
       }[e.code];
       toast('No se pudo entrar: '+(msg||e.code||e.message), true); return false;
-    }
+    }finally{ this.entrando=false; }
   },
 
   async recuperar(email){
-    await this.cargarSDK();
-    if(!this.auth) await this.init({silencioso:false});
+    this.entrando=true;
+    try{ await this.init(); }finally{ this.entrando=false; }
     if(!this.auth) return false;
     try{ await this.fb.sendPasswordResetEmail(this.auth, email); }
-    catch(e){ if(e.code==='auth/invalid-email'){ toast('El email no es válido', true); return false; } }
+    catch(e){
+      if(e.code==='auth/invalid-email'){ toast('El email no es válido', true); return false; }
+      if(e.code==='auth/network-request-failed'){ toast('Sin conexión a internet', true); return false; }
+    }
     // Mismo mensaje exista o no la cuenta, para no revelar qué mails están registrados
     toast('Si la cuenta existe, te llegó un mail para cambiar la contraseña');
     return true;
@@ -651,11 +735,17 @@ const Cloud = {
     try{ datos=normalizar(JSON.parse(payload)); }
     catch(e){ toast('Los datos de la nube están dañados; se conservan los de este equipo', true); return false; }
     Store.data=datos;
-    Store.save(true);
+    Store.save(true, datos.updatedAt);        // conserva la fecha de la nube para comparar bien la próxima vez
     return true;
   },
 
-  async salir(){ if(this.desuscribir){this.desuscribir();this.desuscribir=null;} if(this.auth) await this.fb.signOut(this.auth); this.user=null; this.setEstado('sinsesion'); render(); },
+  // Cierra la sesión y borra los datos de este equipo; quedan solo en la nube
+  async salir(){
+    if(this.timer){ clearTimeout(this.timer); this.timer=null; await this.subir({auto:true}); }   // no perder lo último
+    if(this.desuscribir){ this.desuscribir(); this.desuscribir=null; }
+    this.limpiarEquipo();
+    if(this.auth) await this.fb.signOut(this.auth);
+  },
 
   ref(){ return this.fb.doc(this.db,'empresas',this.empresaId()); },
 
@@ -677,7 +767,7 @@ const Cloud = {
   programarSubida(){
     if(!this.user || !this.cfg || this.cfg.auto===false) return;
     clearTimeout(this.timer);
-    this.timer=setTimeout(()=>this.subir({auto:true}), 1500);
+    this.timer=setTimeout(()=>{ this.timer=null; this.subir({auto:true}); }, 1500);
   },
 
   async subir({auto=false}={}){
@@ -741,6 +831,88 @@ function toast(msg, bad){
   const t=$('#toast'); t.textContent=msg; t.className='toast on'+(bad?' bad':'');
   clearTimeout(toastT); toastT=setTimeout(()=>t.className='toast'+(bad?' bad':''),2600);
 }
+
+/* ---------- Pantalla de ingreso ---------- */
+const Acceso = {
+  error:'', verCfg:false,
+  marco(cuerpo){
+    $('#login').innerHTML = `<div class="login-card">
+      <div class="login-h"><img src="logo-aixa.png" alt="AIXA"><div><b>Control financiero AIXA</b><small>Ingreso</small></div></div>
+      ${cuerpo}</div>`;
+  },
+  cargando(txt){
+    document.body.classList.add('bloqueado');
+    this.marco(`<div class="login-wait">${esc(txt)}</div>`);
+  },
+  mostrar(msg){
+    if(msg) this.error=msg;
+    document.body.classList.add('bloqueado');
+    closeModal();
+    const cc = Cloud.leerCfg()||{};
+    const pedirCfg = !Cloud.fija() && (!Cloud.activa() || this.verCfg);
+    this.marco(`<form class="login-b" id="lgForm" novalidate>
+      ${this.error?`<div class="login-err">${esc(this.error)}</div>`:''}
+      ${pedirCfg?`<div class="login-cfg">
+        <p>Conexión de este equipo con Firebase (se carga una sola vez). Los datos están en el README.</p>
+        <label class="fld"><span>API key</span><input id="lgKey" value="${esc(cc.apiKey||'')}" placeholder="AIzaSy..." autocomplete="off"></label>
+        <label class="fld"><span>ID del proyecto</span><input id="lgProj" value="${esc(cc.projectId||'')}" placeholder="obra-control-1234" autocomplete="off"></label>
+        <label class="fld"><span>App ID</span><input id="lgApp" value="${esc(cc.appId||'')}" placeholder="1:123...:web:abc" autocomplete="off"></label>
+        <label class="fld"><span>Código de empresa</span><input id="lgEmp" value="${esc(cc.empresaId||'principal')}" autocomplete="off">
+          <div class="hint">Todos tienen que usar el mismo código.</div></label>
+      </div>`:''}
+      <label class="fld"><span>Email</span><input id="lgMail" type="email" value="${esc(cc.email||'')}" autocomplete="username"></label>
+      <label class="fld"><span>Contraseña</span><input id="lgPass" type="password" autocomplete="current-password"></label>
+      <button class="btn pri" id="lgEntrar" type="submit">Entrar</button>
+      <div class="login-links">
+        <button type="button" id="lgOlvido">Olvidé mi contraseña</button>
+        ${!Cloud.fija() && Cloud.activa() && !this.verCfg?'<button type="button" id="lgCfg">Cambiar conexión</button>':''}
+      </div>
+    </form>`);
+    const foco = pedirCfg && !cc.apiKey ? '#lgKey' : cc.email ? '#lgPass' : '#lgMail';
+    $(foco)?.focus();
+
+    // Toma la conexión del formulario (si se muestra) y la valida; null si falta algo
+    const conexion = ()=>{
+      const c = Object.assign({}, Cloud.cfg||{});
+      if(pedirCfg){
+        Object.assign(c, {apiKey:$('#lgKey').value.trim(), projectId:$('#lgProj').value.trim(),
+          appId:$('#lgApp').value.trim(), empresaId:$('#lgEmp').value.trim()||'principal'});
+        if(!c.apiKey||!c.projectId){ toast('Faltan la API key y el ID del proyecto', true); return null; }
+        if(!/^[A-Za-z0-9_-]{1,64}$/.test(c.empresaId)){ toast('El código de empresa solo puede tener letras, números, guiones y guiones bajos', true); return null; }
+      }
+      c.email = $('#lgMail').value.trim();
+      // Firebase no permite cambiar de proyecto en caliente: si cambió, se guarda y se recarga la página
+      const otroProyecto = Cloud.app && (Cloud.cfg?.apiKey!==c.apiKey || Cloud.cfg?.projectId!==c.projectId);
+      Cloud.guardarCfg(c);
+      if(otroProyecto){ location.reload(); return null; }
+      return c;
+    };
+
+    $('#lgForm').onsubmit = async e=>{
+      e.preventDefault();
+      const pass=$('#lgPass').value;
+      if(!$('#lgMail').value.trim() || !pass) return toast('Completá email y contraseña', true);
+      const c=conexion(); if(!c) return;
+      this.error=''; this.verCfg=false;
+      const b=$('#lgEntrar'); b.disabled=true; b.textContent='Entrando…';
+      const ok = await Cloud.entrar(c.email, pass);
+      // si entró, el cambio de sesión abre la app solo; si no, se rehabilita el botón
+      if(!ok && document.body.contains(b)){ b.disabled=false; b.textContent='Entrar'; }
+    };
+    $('#lgOlvido').onclick = async ()=>{
+      if(!$('#lgMail').value.trim()) return toast('Escribí tu email para recibir el enlace', true);
+      const c=conexion(); if(!c) return;
+      await Cloud.recuperar(c.email);
+    };
+    $('#lgCfg')?.addEventListener('click', ()=>{ this.verCfg=true; this.mostrar(); });
+  },
+  abrir(){
+    this.error='';
+    document.body.classList.remove('bloqueado');
+    $('#login').innerHTML='';
+    render();
+  }
+};
 
 function icon(n){
   const p={
@@ -810,9 +982,9 @@ function openForm({title, fields, values={}, onSave, wide}){
   m.addEventListener('keydown',e=>{ if(e.key==='Enter' && e.target.tagName!=='TEXTAREA'){ e.preventDefault(); m.querySelector('[data-s]').click(); }});
 }
 
-function confirmDel(txt, onYes){
-  const m = modal({title:'Confirmar borrado', body:`<p style="font-size:14px">${esc(txt)}</p><p style="font-size:12.5px;color:var(--muted);margin-top:8px">Esta acción no se puede deshacer.</p>`,
-    actions:`<button class="btn" data-c>Cancelar</button><button class="btn dgr" data-y>Borrar</button>`});
+function confirmDel(txt, onYes, {titulo='Confirmar borrado', boton='Borrar', nota='Esta acción no se puede deshacer.'}={}){
+  const m = modal({title:titulo, body:`<p style="font-size:14px">${esc(txt)}</p><p style="font-size:12.5px;color:var(--muted);margin-top:8px">${esc(nota)}</p>`,
+    actions:`<button class="btn" data-c>Cancelar</button><button class="btn dgr" data-y>${esc(boton)}</button>`});
   m.querySelector('[data-c]').onclick=closeModal;
   m.querySelector('[data-y]').onclick=()=>{ onYes(); closeModal(); };
 }
@@ -996,6 +1168,7 @@ function renderNav(){
 document.addEventListener('click',e=>{
   const n=e.target.closest('[data-nav]'); if(n){ go(n.dataset.nav); $('#sidebar').classList.remove('open'); }
   const b=e.target.closest('[data-act="backup"]'); if(b) exportar();
+  if(e.target.closest('[data-act="salir"]')) Cloud.salir();
   const n2=e.target.closest('#storeInfo'); if(n2) go('config');
 });
 $('#burger').onclick=()=>$('#sidebar').classList.toggle('open');
@@ -1922,7 +2095,6 @@ function formPrevision(p){
    ========================================================= */
 function vConfig(){
   const c=D().config;
-  const cc=Cloud.leerCfg()||{};
   const cuenta = n=>D()[n].length;
   view.innerHTML=`
   <div class="grid g2">
@@ -1936,7 +2108,7 @@ function vConfig(){
     </div></div>
 
     <div class="card"><div class="card-h"><h2>Respaldo de datos</h2></div><div class="card-b">
-      <p style="font-size:13px;color:var(--muted);margin-bottom:14px">Los datos se guardan en este navegador. Descargá un respaldo seguido y guardalo en la nube (Drive, Dropbox) o pasalo a otra computadora con "Restaurar".</p>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px">Los datos viven en la nube de Firebase. Igual conviene descargar un respaldo cada tanto y guardarlo en Drive o Dropbox: con "Restaurar" se recupera todo.</p>
       <div class="row">
         <button class="btn dark" id="expJson">${icon('down')} Descargar respaldo</button>
         <button class="btn" id="impJson">${icon('up')} Restaurar respaldo</button>
@@ -1954,36 +2126,23 @@ function vConfig(){
     </div></div>
   </div>
 
-  <div class="card" style="margin-top:16px"><div class="card-h"><h2>Sincronización en la nube</h2>
-    <span class="chip ${Cloud.user?'g':Cloud.activa()?'r':''}">${Cloud.user?'Conectado':Cloud.activa()?'Sin sesión':'Desactivada'}</span></div>
+  <div class="card" style="margin-top:16px"><div class="card-h"><h2>Sesión y nube</h2>
+    <span class="chip ${Cloud.estado==='conectado'?'g':Cloud.estado==='error'?'r':''}">${Cloud.estado==='conectado'?'Sincronizado':Cloud.estado==='error'?'Error de conexión':'Guardando…'}</span></div>
     <div class="card-b">
-    <p style="font-size:13px;color:var(--muted);margin-bottom:14px;max-width:70ch">
-      Con esto los datos dejan de vivir solo en este navegador: se guardan en Firebase, los ven los tres usuarios y se actualizan en vivo.
-      Cada uno entra con su email y su contraseña, pero comparten el mismo <b>código de empresa</b>, así que todos ven y editan lo mismo.
-      El sitio sigue siendo el mismo de GitHub Pages, no hace falta servidor propio. Es gratis para un uso como el tuyo.
-      Seguí los pasos del archivo <b>README.md</b> para obtener estos datos en firebase.google.com.
-      Las cuentas las crea el administrador en la consola de Firebase; acá solo se inicia sesión.</p>
-    <div class="ff">
-      <label class="fld"><span>API key</span><input id="fbKey" value="${esc(cc.apiKey||'')}" placeholder="AIzaSy..."></label>
-      <label class="fld"><span>ID del proyecto</span><input id="fbProj" value="${esc(cc.projectId||'')}" placeholder="obra-control-1234"></label>
-      <label class="fld"><span>App ID</span><input id="fbApp" value="${esc(cc.appId||'')}" placeholder="1:123...:web:abc"></label>
-      <label class="fld"><span>Auth domain (opcional)</span><input id="fbDom" value="${esc(cc.authDomain||'')}" placeholder="se completa solo"></label>
-      <label class="fld full"><span>Código de empresa (compartido)</span><input id="fbEmp" value="${esc(cc.empresaId||'principal')}" placeholder="principal">
-        <div class="hint">Los tres tienen que poner exactamente el mismo código: es lo que hace que vean los mismos datos. Cada uno entra con su propio email.</div></label>
-      <label class="fld"><span>Tu email</span><input id="fbMail" type="email" value="${esc(cc.email||'')}"></label>
-      <label class="fld"><span>Contraseña</span><input id="fbPass" type="password" placeholder="${Cloud.user?'ya iniciaste sesión':'mínimo 6 caracteres'}"></label>
-      <label class="fld full"><span>Sincronizar automáticamente</span><div class="chk"><input type="checkbox" id="fbAuto" ${cc.auto===false?'':'checked'}><span>Subir los cambios a la nube apenas los guardo</span></div></label>
-    </div>
+    <table><tbody>
+      ${fila('Usuario', esc(Cloud.user?.email||'—'))}
+      ${fila('Código de empresa', esc(Cloud.empresaId()))}
+      ${fila('Última modificación', new Date(D().updatedAt||Date.now()).toLocaleString('es-AR'))}
+    </tbody></table>
+    <p style="font-size:12.5px;color:var(--muted);margin:12px 0 14px;max-width:70ch">
+      Los cambios se guardan en la nube apenas los cargás y les aparecen en vivo a los demás usuarios.
+      Al cerrar sesión se borran los datos de este equipo: quedan solo en la nube.
+      Las cuentas las crea el administrador en la consola de Firebase (ver README.md).</p>
     <div class="row">
-      ${Cloud.user
-        ? `<button class="btn dark" id="fbSubir">${icon('up')} Subir ahora</button>
-           <button class="btn" id="fbBajar">${icon('down')} Bajar de la nube</button>
-           <button class="btn" id="fbSalir">Cerrar sesión</button>`
-        : `<button class="btn pri" id="fbEntrar">Conectar y entrar</button>
-           <button class="btn" id="fbOlvido">Olvidé mi contraseña</button>`}
-      ${Cloud.activa()?`<button class="btn dgr push" id="fbOlvidar">Desvincular este equipo</button>`:''}
+      <button class="btn dark" id="fbSubir">${icon('up')} Subir ahora</button>
+      <button class="btn" id="fbBajar">${icon('down')} Bajar de la nube</button>
+      <button class="btn dgr push" id="fbSalir">Cerrar sesión</button>
     </div>
-    ${Cloud.user?`<div class="mini" style="margin-top:10px">Sesión: ${esc(Cloud.user.email||'')} · empresa "${esc(Cloud.empresaId())}" · última modificación local ${new Date(D().updatedAt||Date.now()).toLocaleString('es-AR')}</div>`:''}
   </div></div>
 
   <div class="card" style="margin-top:16px"><div class="card-h"><h2>Cargar datos de ejemplo</h2></div><div class="card-b">
@@ -2004,8 +2163,7 @@ function vConfig(){
     const r=new FileReader();
     r.onload=()=>{ try{ const d=normalizar(JSON.parse(r.result));
       const n=COLS.reduce((s,k)=>s+d[k].length,0);
-      const nube=Cloud.user?' Como la nube está conectada, también se reemplazarán para los demás usuarios.':'';
-      confirmDel(`Se reemplazarán todos los datos actuales por los del respaldo (${d.obras.length} obras, ${n} registros en total). Antes se descargará automáticamente un respaldo de los datos actuales.${nube}`,()=>{
+      confirmDel(`Se reemplazarán todos los datos de la empresa, para todos los usuarios, por los del respaldo (${d.obras.length} obras, ${n} registros en total). Antes se descargará automáticamente un respaldo de los datos actuales.`,()=>{
         exportar('previo-a-restaurar');
         d.updatedAt=Date.now();
         Store.data=d; Store.save(); toast('Respaldo restaurado'); go('panel');
@@ -2013,41 +2171,16 @@ function vConfig(){
     }catch(err){ toast('El archivo no es un respaldo válido', true); } };
     r.readAsText(f); e.target.value='';
   };
-  $('#wipe').onclick=()=>confirmDel('Se borrarán TODAS las obras, movimientos, vehículos y gastos fijos'+(Cloud.user?', también en la nube para todos los usuarios':'')+'. Antes se descargará un respaldo automáticamente.',()=>{
+  $('#wipe').onclick=()=>confirmDel('Se borrarán TODAS las obras, movimientos, vehículos y gastos fijos, en la nube y para todos los usuarios. Antes se descargará un respaldo automáticamente.',()=>{
     exportar('previo-a-borrar');
     Store.data=structuredClone(DEF); Store.save(); toast('Datos borrados'); go('panel');
   });
-  $('#demo').onclick=cargarDemo;
+  $('#demo').onclick=()=>confirmDel('Se agregarán dos obras, un vehículo y gastos fijos de ejemplo a los datos de la empresa. Los van a ver todos los usuarios y después hay que borrarlos a mano.',cargarDemo,
+    {titulo:'Cargar datos de ejemplo', boton:'Cargar ejemplo', nota:'Conviene usarlo solo para probar, antes de cargar datos reales.'});
 
-  const leerFb=()=>({apiKey:$('#fbKey').value.trim(), projectId:$('#fbProj').value.trim(),
-    appId:$('#fbApp').value.trim(), authDomain:$('#fbDom').value.trim(), email:$('#fbMail').value.trim(),
-    empresaId:($('#fbEmp').value.trim()||'principal'), auto:$('#fbAuto').checked});
-  $('#fbEntrar')?.addEventListener('click', async ()=>{
-    const cfg=leerFb(), pass=$('#fbPass').value;
-    if(!cfg.apiKey||!cfg.projectId) return toast('Faltan la API key y el ID del proyecto', true);
-    if(!cfg.email||pass.length<6) return toast('Completá email y una contraseña de al menos 6 caracteres', true);
-    if(!/^[A-Za-z0-9_-]{1,64}$/.test(cfg.empresaId)) return toast('El código de empresa solo puede tener letras, números, guiones y guiones bajos', true);
-    Cloud.guardarCfg(cfg);
-    const b=$('#fbEntrar'); b.textContent='Conectando…'; b.disabled=true;
-    await Cloud.init({silencioso:false});
-    const ok=await Cloud.entrar(cfg.email, pass);
-    if(ok){ toast('Conectado a la nube'); await Cloud.bajar({auto:true}); }
-    render();
-  });
-  $('#fbOlvido')?.addEventListener('click', async ()=>{
-    const cfg=leerFb();
-    if(!cfg.apiKey||!cfg.projectId) return toast('Faltan la API key y el ID del proyecto', true);
-    if(!cfg.email) return toast('Escribí tu email para recibir el enlace', true);
-    Cloud.guardarCfg(cfg);
-    await Cloud.recuperar(cfg.email);
-  });
-  $('#fbSubir')?.addEventListener('click', ()=>Cloud.subir({}));
-  $('#fbBajar')?.addEventListener('click', ()=>Cloud.bajar({}));
-  $('#fbSalir')?.addEventListener('click', ()=>Cloud.salir());
-  $('#fbOlvidar')?.addEventListener('click', ()=>confirmDel('Se desvincula la nube de este equipo. Los datos quedan igual acá y en la nube.',()=>{
-    Cloud.olvidarCfg(); toast('Equipo desvinculado'); render();
-  }));
-  $('#fbAuto')?.addEventListener('change', e=>{ if(Cloud.cfg){ Cloud.cfg.auto=e.target.checked; Cloud.guardarCfg(Cloud.cfg); } });
+  $('#fbSubir').onclick=()=>Cloud.subir({});
+  $('#fbBajar').onclick=()=>Cloud.bajar({});
+  $('#fbSalir').onclick=()=>Cloud.salir();
 }
 
 function exportar(sufijo){
@@ -2106,10 +2239,11 @@ function cargarDemo(){
 /* =========================================================
    Arranque
    ========================================================= */
+// La app solo se muestra con una sesión iniciada; hasta entonces queda la pantalla de ingreso
 Store.load();
-render();
-Cloud.setEstado(Cloud.leerCfg() && Cloud.activa() ? 'conectando' : 'off');
-if(Cloud.activa()) Cloud.init({silencioso:true});
+Cloud.leerCfg();
+if(Cloud.activa()){ Acceso.cargando('Conectando…'); Cloud.init(); }
+else Acceso.mostrar();
 window.addEventListener('online', ()=>{ if(Cloud.user) Cloud.subir({auto:true}); });
 
 </script>

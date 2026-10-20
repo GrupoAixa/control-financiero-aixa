@@ -20,9 +20,9 @@ No hace falta tocar nada en **Settings → Pages**: ya quedó configurado con *S
 
 ---
 
-## 2. Sincronización en la nube (opcional pero recomendado)
+## 2. Ingreso y nube (obligatorio)
 
-Sin esto, los datos quedan guardados **solo en el navegador donde los cargaste**. Con esto, los mismos datos se ven desde la compu, el celular y la tablet, y quedan respaldados aunque se rompa el equipo.
+La app **pide email y contraseña siempre** y no muestra nada hasta que se inicia sesión. Los datos viven en la nube de Firebase: se ven iguales desde la compu, el celular y la tablet, y quedan respaldados aunque se rompa el equipo. Hace falta conexión a internet para trabajar.
 
 Usamos **Firebase** (de Google). El plan gratuito alcanza de sobra para esto.
 
@@ -73,15 +73,21 @@ Cambiá esos tres mails por los reales (en minúsculas, tal como figuran en **Au
 
 ### Conectar la app
 
-1. Abrí el sitio → **Ajustes y datos → Sincronización en la nube**.
-2. Pegá `apiKey`, `projectId` y `appId`.
-3. En **Código de empresa** dejá `principal` (o el que quieras, pero **todos tienen que escribir exactamente el mismo**).
-4. Poné tu email y la contraseña de la cuenta que se creó en Firebase (paso 4 de arriba).
-5. **Conectar y entrar**.
+La primera vez que se abre el sitio en un equipo, la pantalla de ingreso pide también los datos de conexión:
 
-Repetí los pasos 1 a 5 en la compu de cada uno y en cada celular, cambiando solo el email y la contraseña. Todos ven los mismos datos.
+1. Pegá `apiKey`, `projectId` y `appId`.
+2. En **Código de empresa** dejá `principal` (o el que quieras, pero **todos tienen que escribir exactamente el mismo**).
+3. Poné tu email y la contraseña de la cuenta que se creó en Firebase (paso 4 de arriba) y tocá **Entrar**.
 
-**Cómo se resuelven los choques:** mientras todos estén online, cada cambio viaja al instante y no hay conflicto. Si alguien trabaja sin señal y otro edita al mismo tiempo, al volver la conexión queda la versión que se guardó último. Para casos así están los botones **Subir ahora** y **Bajar de la nube**, que fuerzan la dirección. En la práctica, la recomendación es simple: que no editen la misma obra al mismo tiempo estando uno sin internet.
+Desde la segunda vez en ese equipo solo se piden email y contraseña. Para corregir los datos de conexión, en la pantalla de ingreso está **Cambiar conexión**.
+
+> Para que nadie tenga que cargar los datos de conexión, se pueden escribir una sola vez en `docs/index.html`, en el bloque `const CONEXION = {...}`. No son secretos (Firebase los muestra en cualquier app web); lo que protege los datos son las cuentas y las reglas de Firestore.
+
+**Sesión:** queda abierta en el equipo hasta que se toca **Salir** (abajo en el menú) o **Cerrar sesión** (en Ajustes). Al cerrar sesión se borran los datos de ese equipo: quedan solo en la nube. Si se olvida la contraseña, en la pantalla de ingreso está **Olvidé mi contraseña**.
+
+**Al entrar, manda la nube:** si el equipo tenía datos viejos de antes (por ejemplo, cargados antes de usar la nube), se reemplazan por los de la nube y antes se descarga un respaldo de esos datos viejos (archivo terminado en `-previo-al-ingreso.json`). Si la nube está vacía, se suben los datos del equipo.
+
+**Cómo se resuelven los choques:** cada cambio viaja al instante y les aparece a los demás sin recargar. Si dos personas editan exactamente al mismo tiempo, queda la versión que se guardó último. Los botones **Subir ahora** y **Bajar de la nube** de Ajustes fuerzan la dirección si hace falta.
 
 ---
 
