@@ -1,22 +1,34 @@
 # Control financiero AIXA — puesta en marcha
 
-Es **un solo archivo**: `docs/index.html`. No hay que compilar nada ni usar Vercel.
+Partes del sistema:
 
-Ya está publicado en:
+- `docs/index.html`: la app completa (un solo archivo, no hay que compilar nada).
+- `api/informe-financiero.js`: función de servidor que genera el **informe con IA** (Claude). Es la única que conoce la clave de Anthropic.
+- **Firebase**: inicios de sesión y datos (plan gratuito).
+- **Vercel**: publica la app y la función de servidor (igual que maderogest).
 
-**https://grupoaixa.github.io/control-financiero-aixa/**
-
-En el celular, abrí esa dirección y usá "Agregar a pantalla de inicio". Queda como una app.
+En el celular, abrí la dirección del sitio y usá "Agregar a pantalla de inicio". Queda como una app.
 
 ---
 
-## 1. Cómo actualizarlo
+## 1. Publicar en Vercel
 
-1. Editá `docs/index.html` (o reemplazalo por una versión nueva).
-2. Subí el cambio a la rama `main` (commit + push).
-3. En 1–2 minutos el sitio publicado se actualiza solo — GitHub Pages sirve el contenido de la carpeta `/docs`.
+1. Entrá a <https://vercel.com> → **Add New → Project** e importá el repositorio `GrupoAixa/control-financiero-aixa`. Si no aparece, en **Adjust GitHub App Permissions** dale acceso a ese repositorio.
+2. No cambies nada de compilación: `vercel.json` ya indica que la app está en `docs/` y que no hay que compilar.
+3. En **Environment Variables** cargá:
+   - `ANTHROPIC_API_KEY`: la clave de <https://console.anthropic.com> (**Settings → API Keys**). Nunca la pongas en el código.
+   - `FIREBASE_API_KEY`: la misma `apiKey` del proyecto de Firebase.
+   - `EMAILS_AUTORIZADOS`: los mails que pueden generar informes, separados por coma (los mismos de las reglas de Firestore).
+4. **Deploy**. Vercel te da una dirección del tipo `control-financiero-aixa.vercel.app`.
+5. En Firebase, **Authentication → Settings → Dominios autorizados**, agregá esa dirección de Vercel.
 
-No hace falta tocar nada en **Settings → Pages**: ya quedó configurado con *Source* = rama `main`, carpeta `/docs`.
+Para actualizar el sistema: commit + push a `main`, y Vercel publica solo en 1–2 minutos.
+
+> El sitio viejo de GitHub Pages (`grupoaixa.github.io/control-financiero-aixa`) sigue funcionando, pero ahí el informe con IA no anda porque no tiene servidor. Cuando Vercel esté andando, conviene apagarlo en GitHub → **Settings → Pages → Unpublish site**.
+
+### Costo del informe con IA
+
+Usa **Claude Opus 5.5**. Cada informe cuesta aproximadamente **US$ 0,20 a 0,40**, según cuántas obras haya y cuánto analice. Se paga con crédito prepago en <https://console.anthropic.com> (**Settings → Billing**); ahí mismo se puede fijar un límite de gasto mensual. Firebase y Vercel quedan en sus planes gratuitos.
 
 ---
 
@@ -69,23 +81,15 @@ service cloud.firestore {
 
 Cambiá esos tres mails por los reales (en minúsculas, tal como figuran en **Authentication → Users**). La regla también impide borrar el documento de la empresa desde afuera de la consola. **Solo esas direcciones pueden leer o escribir los datos**, aunque el repositorio de GitHub sea público y cualquiera vea el código. Si mañana entra alguien más al equipo, agregás su mail a esa lista y publicás de nuevo las reglas; si alguien se va, lo sacás y pierde el acceso al instante.
 
-7. En **Authentication → Settings → Dominios autorizados**, agregá `grupoaixa.github.io`.
+7. En **Authentication → Settings → Dominios autorizados**, agregá la dirección de Vercel (y `grupoaixa.github.io` mientras siga publicado ahí).
 
 ### Conectar la app
 
-La primera vez que se abre el sitio en un equipo, la pantalla de ingreso pide también los datos de conexión:
+Los datos de conexión (`apiKey`, `projectId`, `appId` y el código de empresa) están escritos en `docs/index.html`, en el bloque `const CONEXION = {...}`, así que cada usuario solo pone su email y contraseña. No son secretos (Firebase los muestra en cualquier app web); lo que protege los datos son las cuentas y las reglas de Firestore.
 
-1. Pegá `apiKey`, `projectId` y `appId`.
-2. En **Código de empresa** dejá `principal` (o el que quieras, pero **todos tienen que escribir exactamente el mismo**).
-3. Poné tu email y la contraseña de la cuenta que se creó en Firebase (paso 4 de arriba) y tocá **Entrar**.
+**Sesión:** queda abierta en el equipo hasta que se toca **Salir** (abajo en el menú) o **Cerrar sesión** (en Ajustes). Los datos viven solo en la nube: no quedan guardados en el navegador y al volver a entrar, desde cualquier equipo, se ven iguales. Si se olvida la contraseña, en la pantalla de ingreso está **Olvidé mi contraseña**.
 
-Desde la segunda vez en ese equipo solo se piden email y contraseña. Para corregir los datos de conexión, en la pantalla de ingreso está **Cambiar conexión**.
-
-> Para que nadie tenga que cargar los datos de conexión, se pueden escribir una sola vez en `docs/index.html`, en el bloque `const CONEXION = {...}`. No son secretos (Firebase los muestra en cualquier app web); lo que protege los datos son las cuentas y las reglas de Firestore.
-
-**Sesión:** queda abierta en el equipo hasta que se toca **Salir** (abajo en el menú) o **Cerrar sesión** (en Ajustes). Al cerrar sesión se borran los datos de ese equipo: quedan solo en la nube. Si se olvida la contraseña, en la pantalla de ingreso está **Olvidé mi contraseña**.
-
-**Al entrar, manda la nube:** si el equipo tenía datos viejos de antes (por ejemplo, cargados antes de usar la nube), se reemplazan por los de la nube y antes se descarga un respaldo de esos datos viejos (archivo terminado en `-previo-al-ingreso.json`). Si la nube está vacía, se suben los datos del equipo.
+**Datos de versiones anteriores:** las primeras versiones guardaban una copia en el navegador. Al entrar, si la nube está vacía, esa copia se sube; si la nube ya tiene datos, manda la nube y la copia vieja se descarga como respaldo (archivo terminado en `-previo-al-ingreso.json`). Después se borra del navegador.
 
 **Cómo se resuelven los choques:** cada cambio viaja al instante y les aparece a los demás sin recargar. Si dos personas editan exactamente al mismo tiempo, queda la versión que se guardó último. Los botones **Subir ahora** y **Bajar de la nube** de Ajustes fuerzan la dirección si hace falta.
 
@@ -99,14 +103,17 @@ Al **restaurar** un respaldo o **borrar todos los datos**, la app descarga prime
 
 La nube guarda todo en un único documento, que Firebase limita a 1 MB. La app avisa cuando los datos pasan los 800 KB; si se llega al límite, conviene archivar las obras viejas en un respaldo y sacarlas del sistema.
 
-En una computadora compartida, al terminar usá **Cerrar sesión** y, si no la vas a volver a usar, **Desvincular este equipo**.
+En una computadora compartida, al terminar usá **Salir**.
 
 También podés exportar a CSV para abrir los movimientos en Excel.
+
+**Datos de ejemplo:** en **Ajustes y datos** se pueden cargar para probar y después borrar con **Borrar datos de ejemplo**, sin tocar los datos reales.
 
 ---
 
 ## 4. Cómo está pensado el sistema
 
+- **Informe con IA**: Claude analiza los indicadores del sistema (rentabilidad, punto de equilibrio, margen de seguridad, plazos de cobro y pago, ciclo de caja, caja proyectada, obras y estructura) con el marco de la contabilidad gerencial y escribe un informe para la dirección con riesgos y recomendaciones priorizadas. Se puede indicar la inflación del período y un foco ("¿podemos tomar una obra grande?"). Se guardan los últimos 12 informes y se pueden imprimir o guardar en PDF.
 - **Obra**: la unidad de análisis. Tiene presupuesto, fechas (aceptación / entrega prevista / entrega real), sus ingresos y sus costos.
 - **Ingresos**: cada cobro con su fecha real. De acá salen el plazo de cobro, el VAN y la TIR.
 - **Costos**: cada gasto con fecha de factura y fecha de pago. La diferencia entre ambas es el plazo de pago a proveedores.

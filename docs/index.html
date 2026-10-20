@@ -153,6 +153,18 @@ tfoot td{border-top:1px solid var(--line);border-bottom:0;font-weight:700;backgr
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(70px);background:var(--ink);color:#fff;padding:11px 18px;border-radius:var(--r);font-size:13px;z-index:200;opacity:0;transition:.22s;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,.2)}
 .toast.on{opacity:1;transform:translateX(-50%)}
 .toast.bad{background:var(--rojo)}
+/* Informe con IA */
+.inf-sec{margin-bottom:14px}
+.inf-sec .card-b p{font-size:13.5px;line-height:1.6;margin-bottom:8px;max-width:85ch}
+.inf-sec .card-b p:last-child{margin-bottom:0}
+.inf-lista{padding-left:18px;font-size:13.5px;line-height:1.6}
+.inf-sec td{vertical-align:top;font-size:13px}
+@media print{
+  .sidebar,.topbar,.no-print,.toast{display:none!important}
+  .app{display:block}
+  body{background:#fff}
+  .inf-sec{break-inside:avoid}
+}
 /* Pantalla de ingreso: mientras no hay sesión, la app no se muestra */
 body.bloqueado .app{display:none}
 .login{display:none}
@@ -192,6 +204,7 @@ body.bloqueado .login{display:flex;min-height:100vh;align-items:center;justify-c
 .big-note b{font-weight:600}
 .big-note.ok{background:var(--verde-soft);border-color:#C6E3D9;border-left-color:var(--verde)}
 .big-note.bad{background:var(--rojo-soft);border-color:#F0CFCA;border-left-color:var(--rojo)}
+.big-note.warn{background:#FFF6E0;border-color:#F1DDA8;border-left-color:var(--amarillo)}
 
 .filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
 .filters select,.filters input{border:1px solid var(--line);border-radius:var(--r);padding:6px 9px;background:var(--surface);font-size:13px}
@@ -254,7 +267,8 @@ const DEF = {
   updatedAt:0,
   obras:[], ingresos:[], costos:[],
   vehiculos:[], cargas:[], vgastos:[],
-  fijos:[], planes:[], previsiones:[]
+  fijos:[], planes:[], previsiones:[],
+  informes:[]   // informes con IA generados (se guardan los últimos)
 };
 
 // Valida y limpia datos que llegan de afuera (respaldo, nube o navegador) antes de usarlos.
@@ -922,7 +936,8 @@ function icon(n){
     del:'<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>',
     back:'<path d="M19 12H5M12 19l-7-7 7-7"/>',
     down:'<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>',
-    up:'<path d="M12 21V9M7 14l5-5 5 5M4 3h16"/>'
+    up:'<path d="M12 21V9M7 14l5-5 5 5M4 3h16"/>',
+    ia:'<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/>'
   }[n]||'';
   return '<svg viewBox="0 0 24 24">'+p+'</svg>';
 }
@@ -1150,6 +1165,7 @@ const NAV = [
   {g:'Análisis', items:[
     {k:'caja', l:'Proyección de caja', i:'caja'},
     {k:'finanzas', l:'Salud financiera', i:'panel'},
+    {k:'informe', l:'Informe con IA', i:'ia'},
     {k:'config', l:'Ajustes y datos', i:'conf'}
   ]}
 ];
@@ -1172,14 +1188,15 @@ function go(v,id,tab){ R.v=v; R.id=id||null; R.tab=tab||null; render(); window.s
 
 const TITLES = {panel:['Resumen','Panel general'],obras:['Operación','Obras'],obra:['Obras','Detalle de obra'],
   vehiculos:['Operación','Vehículos'],vehiculo:['Vehículos','Detalle de vehículo'],fijos:['Operación','Gastos fijos de estructura'],
-  finanzas:['Análisis','Salud financiera'],caja:['Análisis','Proyección de caja a 90 días'],config:['Análisis','Ajustes y datos']};
+  finanzas:['Análisis','Salud financiera'],caja:['Análisis','Proyección de caja a 90 días'],informe:['Análisis','Informe financiero con IA'],
+  config:['Análisis','Ajustes y datos']};
 
 function render(){
   renderNav();
   const t=TITLES[R.v]||['',''];
   $('#crumb').textContent=t[0]; $('#title').textContent=t[1];
   $('#topActions').innerHTML='';
-  ({panel:vPanel, obras:vObras, obra:vObra, vehiculos:vVehiculos, vehiculo:vVehiculo, fijos:vFijos, finanzas:vFinanzas, caja:vCaja, config:vConfig}[R.v]||vPanel)();
+  ({panel:vPanel, obras:vObras, obra:vObra, vehiculos:vVehiculos, vehiculo:vVehiculo, fijos:vFijos, finanzas:vFinanzas, caja:vCaja, informe:vInforme, config:vConfig}[R.v]||vPanel)();
 }
 
 /* =========================================================
@@ -1909,7 +1926,8 @@ function puntoEquilibrio(){
 /* =========================================================
    Salud financiera (consolidado)
    ========================================================= */
-function vFinanzas(){
+// Indicadores consolidados de la empresa: los usa la pantalla de Salud financiera y el informe con IA
+function consolidado(){
   const tasa=num(D().config.tasa);
   const obras=D().obras.filter(o=>o.estado!=='Cancelada');
   const flows=[];
@@ -1942,7 +1960,11 @@ function vFinanzas(){
   const eq=puntoEquilibrio();
   const promMensual=mesesOrd.length?totI/mesesOrd.length:0;
   const liquidez=totC>0?totI/totC:null;
+  return {tasa,obras,flows,fijoMes,mesesOrd,totI,totC,fijosTot,bruto,neto,caja,van,tir,dso,dpo,rank,mejores,eq,promMensual,liquidez};
+}
 
+function vFinanzas(){
+  const {tasa,obras,mesesOrd,totI,totC,fijosTot,bruto,neto,caja,van,tir,dso,dpo,mejores,eq,promMensual,liquidez}=consolidado();
   view.innerHTML=`
   <div class="grid g4" style="margin-bottom:16px">
     ${kpi('VAN consolidado', van!=null?money(van):'—', `Todos los flujos al ${pct(tasa,0)} anual`, sign(van),'acc-b')}
@@ -2083,6 +2105,179 @@ function formPrevision(p){
       {k:'obraId', l:'Obra relacionada', t:'select', opts:obraOpts()}
     ],
     onSave:v=>{ if(p){Store.upd('previsiones',p.id,v);toast('Actualizado');} else {Store.add('previsiones',v);toast('Movimiento previsto cargado');} render(); }});
+}
+
+/* =========================================================
+   Informe financiero con IA
+   La app arma un resumen con los indicadores ya calculados y lo manda
+   a /api/informe-financiero (Vercel), que es quien habla con Claude.
+   ========================================================= */
+const r0 = v => v==null||!isFinite(v) ? null : Math.round(v);
+const r1 = v => v==null||!isFinite(v) ? null : Math.round(v*10)/10;
+const sinVacios = o => Object.fromEntries(Object.entries(o).filter(([,v])=>v!==null&&v!==undefined&&v!==''&&!(Array.isArray(v)&&!v.length)));
+
+function datosParaIA(inflacion){
+  const c=consolidado(), cfg=D().config;
+  const coef = c.totI>0 ? c.totC/c.totI : null;
+  const meses={};
+  const sumar=(f,k,m)=>{ const mk=monthKey(f); if(!mk) return; (meses[mk]=meses[mk]||{mes:mk,ingresos:0,costos:0})[k]+=num(m); };
+  D().ingresos.forEach(x=>sumar(x.fecha,'ingresos',x.monto));
+  D().costos.forEach(x=>sumar(x.fecha,'costos',x.monto));
+  const estructura={};
+  D().fijos.filter(f=>f.activo!==false).forEach(f=>{ const k=f.categoria||'Otros'; estructura[k]=(estructura[k]||0)+fijoMensual(f); });
+  const p=proyectarCaja(90);
+  return sinVacios({
+    hoy: today(),
+    incluye_datos_de_ejemplo: hayDemo() || undefined,
+    empresa: sinVacios({nombre:cfg.empresa, tasa_descuento_anual_pct:num(cfg.tasa), margen_neto_objetivo_pct:num(cfg.margenObj),
+      saldo_caja_inicial:r0(num(cfg.saldoInicial)), inflacion_periodo_pct: inflacion!=null ? r1(inflacion) : null}),
+    consolidado: sinVacios({ingresos_cobrados:r0(c.totI), costos_directos:r0(c.totC), gastos_estructura_periodo:r0(c.fijosTot),
+      margen_bruto:r0(c.bruto), margen_bruto_pct:c.totI>0?r1(c.bruto/c.totI*100):null, resultado_operativo:r0(c.neto),
+      rentabilidad_neta_pct:c.totI>0?r1(c.neto/c.totI*100):null, van:r0(c.van), tir_pct:c.tir!=null?r1(c.tir*100):null,
+      capital_trabajo_requerido:r0(Math.abs(c.caja.pico)), meses_con_actividad:c.mesesOrd.length, obras_analizadas:c.obras.length}),
+    economicos: sinVacios({punto_equilibrio_mensual:r0(c.eq), facturacion_mensual_promedio:r0(c.promMensual),
+      margen_seguridad_pct:(c.eq&&c.promMensual>0)?r1((c.promMensual-c.eq)/c.promMensual*100):null,
+      coeficiente_variabilidad:coef!=null?Math.round(coef*1000)/1000:null, margen_contribucion_pct:coef!=null?r1((1-coef)*100):null,
+      estructura_mensual:r0(c.fijoMes)}),
+    financieros: sinVacios({plazo_cobro_desde_aceptacion_dias:r0(c.dso), plazo_cobro_desde_entrega_dias:plazoCobroProm(),
+      plazo_pago_proveedores_dias:r0(c.dpo), ciclo_caja_dias:(c.dso!=null&&c.dpo!=null)?r0(c.dso-c.dpo):null,
+      cobertura_costos:c.liquidez!=null?Math.round(c.liquidez*100)/100:null,
+      costos_impagos:r0(D().costos.filter(x=>!x.pagado).reduce((s,x)=>s+num(x.monto),0))}),
+    mensual: Object.values(meses).sort((a,b)=>a.mes<b.mes?-1:1).slice(-24).map(m=>({mes:m.mes, ingresos:r0(m.ingresos), costos:r0(m.costos)})),
+    obras: D().obras.map(o=>{ const a=analizarObra(o), rb=compararRubros(o);
+      return sinVacios({nombre:o.nombre, cliente:o.cliente, estado:o.estado, aceptacion:o.fechaAceptacion, entrega_prevista:o.fechaEntregaPrev,
+        entrega_real:o.fechaEntrega, presupuesto:r0(a.presup), cobrado:r0(a.cobrado), costo:r0(a.costoTot), margen:r0(a.margen),
+        rentabilidad_pct:r1(a.rent), roi_pct:r1(a.roi), meta_roi_pct:a.metaRoi||null, van:r0(a.van), tir_pct:a.tir!=null?r1(a.tir*100):null,
+        atraso_dias:a.atraso, desvio_facturacion_pct:r1(a.desvio), adelanto_pct:r1(a.pctAdelanto), por_cobrar:r0(a.cobrable),
+        por_pagar:r0(a.porPagar), plazo_cobro_desde_entrega_dias:r0(a.cobroDesdeEntrega), plazo_pago_proveedores_dias:r0(a.plazoProv),
+        capital_inmovilizado_max:a.caja.pico<0?r0(-a.caja.pico):null,
+        rubros: rb.filas.map(f=>sinVacios({rubro:f.rubro, presupuestado:r0(f.pre)||null, real:r0(f.real), desvio_pct:r1(f.desvPct)}))});
+    }),
+    estructura: Object.entries(estructura).map(([categoria,m])=>({categoria, mensual:r0(m)})).sort((a,b)=>b.mensual-a.mensual),
+    vehiculos: D().vehiculos.map(v=>{ const a=analizarVehiculo(v);
+      return sinVacios({nombre:v.nombre, gasto_total:r0(a.total), combustible:r0(a.gastoComb), otros:r0(a.gastoOtros),
+        km:r0(a.kmRecorridos)||null, costo_por_km:r1(a.costoKm), consumo_km_l:r1(a.consumo)}); }),
+    caja_proyectada: sinVacios({saldo_inicial:r0(p.saldo0), cobros_90d:r0(p.totalIn), pagos_90d:r0(p.totalOut), saldo_final:r0(p.final),
+      saldo_minimo:r0(p.minimo), primera_semana_en_rojo:p.primeraRoja?p.primeraRoja.ini:null,
+      semanas:p.semanas.map(s=>({desde:s.ini, cobros:r0(s.inn), pagos:r0(s.out), saldo:r0(s.acc)}))})
+  });
+}
+
+// Generación en curso: sobrevive a cambiar de pantalla mientras Claude trabaja
+let informeEnCurso = null;
+
+async function generarInforme(inflacion, foco){
+  if(informeEnCurso) return;
+  informeEnCurso = {desde:Date.now()};
+  render();
+  try{
+    const token = await Cloud.user.getIdToken();
+    const r = await fetch('/api/informe-financiero', {method:'POST',
+      headers:{'Content-Type':'application/json', Authorization:'Bearer '+token},
+      body: JSON.stringify({datos:datosParaIA(inflacion), foco})});
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.error || (r.status===404
+      ? 'El servidor de informes no está disponible: el sitio tiene que estar publicado en Vercel.'
+      : 'Error del servidor ('+r.status+').'));
+    const nuevo = {id:uid(), generado:j.generado, autor:(Cloud.user?.email||'').split('@')[0], foco:foco||'', inflacion, informe:j.informe};
+    Store.data.informes = [nuevo, ...D().informes].slice(0,12);   // se guardan los últimos 12 para todos los usuarios
+    Store.save();
+    R.id = nuevo.id;
+    toast('Informe listo');
+  }catch(e){
+    toast(e.message || 'No se pudo generar el informe', true);
+  }finally{
+    informeEnCurso = null;
+    if(R.v==='informe') render();
+  }
+}
+
+const SEMAF = {verde:['ok','Situación sana'], amarillo:['warn','Con alertas'], rojo:['bad','Situación delicada'], gris:['','Datos insuficientes']};
+const ESTADO_CHIP = {bien:['g','Bien'], atencion:['o','Atención'], mal:['r','Mal'], sin_datos:['','Sin datos']};
+const PRIORIDAD = {alta:['r','Alta'], media:['o','Media'], baja:['','Baja']};
+
+function htmlInforme(reg){
+  const inf=reg.informe||{};
+  const t=v=>esc(typeof v==='string'?v:'');
+  const chip=(map,k)=>{ const [c,l]=map[k]||['',k||'—']; return `<span class="chip ${c}">${esc(l)}</span>`; };
+  const lista=(xs,vacio)=>Array.isArray(xs)&&xs.length ? `<ul class="inf-lista">${xs.map(x=>`<li>${t(x)}</li>`).join('')}</ul>` : `<p class="mini">${vacio}</p>`;
+  const parrafo=v=>t(v).split(/\n+/).filter(Boolean).map(p=>`<p>${p}</p>`).join('');
+  const seccion=(titulo,cuerpo)=>`<div class="card inf-sec"><div class="card-h"><h2>${titulo}</h2></div><div class="card-b">${cuerpo}</div></div>`;
+  const [cls,etq]=SEMAF[inf.semaforo]||SEMAF.gris;
+  const filas=(xs,cols)=>Array.isArray(xs)&&xs.length ? `<div class="tbl-wrap"><table><thead><tr>${cols.map(c=>`<th>${c[1]}</th>`).join('')}</tr></thead><tbody>
+    ${xs.map(x=>`<tr>${cols.map(c=>`<td>${c[2]?c[2](x[c[0]]):t(x[c[0]])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '<p class="mini">Sin datos.</p>';
+  return `
+    <div class="big-note ${cls}" style="margin-bottom:14px">
+      <div class="mini" style="text-transform:uppercase;letter-spacing:.1em">${esc(etq)}</div>
+      <div style="font-family:var(--cond);font-size:20px;font-weight:700;margin-top:2px">${t(inf.titulo)}</div>
+    </div>
+    ${seccion('Resumen ejecutivo', parrafo(inf.resumen_ejecutivo))}
+    ${seccion('Indicadores clave', filas(inf.indicadores, [['nombre','Indicador'],['valor','Valor'],['lectura','Lectura'],['estado','Estado',v=>chip(ESTADO_CHIP,v)]]))}
+    ${seccion('Rentabilidad', parrafo(inf.rentabilidad))}
+    ${seccion('Obras', filas(inf.obras, [['obra','Obra'],['situacion','Situación',v=>chip(ESTADO_CHIP,v)],['comentario','Comentario']]))}
+    ${seccion('Liquidez y caja', parrafo(inf.liquidez_y_caja))}
+    ${seccion('Estructura y costos', parrafo(inf.estructura_y_costos))}
+    <div class="grid g2">
+      ${seccion('Riesgos', lista(inf.riesgos,'No se detectan riesgos relevantes.'))}
+      ${seccion('Oportunidades', lista(inf.oportunidades,'Sin oportunidades destacadas.'))}
+    </div>
+    ${seccion('Recomendaciones', filas(inf.recomendaciones, [['prioridad','Prioridad',v=>chip(PRIORIDAD,v)],['accion','Acción'],['por_que','Por qué']]))}
+    ${seccion('Datos que faltan para un análisis más completo', lista(inf.datos_faltantes,'Nada relevante.'))}
+    <p class="mini" style="margin-top:6px">Generado con IA (Claude) el ${esc(reg.generado||'')}${reg.autor?' por '+esc(reg.autor):''}${reg.foco?' · foco: '+esc(reg.foco):''}${reg.inflacion!=null?' · inflación informada: '+esc(pct(reg.inflacion)):''}, a partir de los datos cargados. Revisalo antes de tomar decisiones.</p>`;
+}
+
+function vInforme(){
+  const lista=D().informes;
+  const sel=lista.find(x=>x.id===R.id) || null;
+  if(sel){
+    view.innerHTML=`<div class="row no-print" style="margin-bottom:14px">
+        <button class="btn" id="infVolver">← Todos los informes</button>
+        <button class="btn dark push" id="infPrint">${icon('down')} Imprimir o guardar PDF</button>
+        <button class="btn dgr" id="infDel">${icon('del')} Borrar</button>
+      </div>
+      <div id="infDoc">${htmlInforme(sel)}</div>`;
+    $('#infVolver').onclick=()=>{ R.id=null; render(); };
+    $('#infPrint').onclick=()=>window.print();
+    $('#infDel').onclick=()=>confirmDel('Se borrará este informe para todos los usuarios.',()=>{
+      Store.data.informes=D().informes.filter(x=>x.id!==sel.id); Store.save(); R.id=null; render(); });
+    return;
+  }
+  const seg = informeEnCurso ? Math.round((Date.now()-informeEnCurso.desde)/1000) : 0;
+  view.innerHTML=`
+  <div class="card" style="margin-bottom:16px"><div class="card-h"><h2>Nuevo informe</h2><span class="sub">Claude Opus 5.5</span></div><div class="card-b">
+    <p style="font-size:13px;color:var(--muted);margin-bottom:14px;max-width:75ch">
+      Claude analiza todos los indicadores del sistema (rentabilidad, punto de equilibrio, plazos de cobro y pago, caja proyectada, obras y estructura)
+      y escribe un informe para la dirección con riesgos y recomendaciones. Tarda entre 1 y 3 minutos.</p>
+    <div class="ff">
+      <label class="fld"><span>Inflación del período (% , opcional)</span><input id="infInfl" type="number" step="any" placeholder="Ej: 35">
+        <div class="hint">Para comparar la rentabilidad contra la inflación.</div></label>
+      <label class="fld full"><span>Foco del informe (opcional)</span><textarea id="infFoco" placeholder="Ej: ¿podemos tomar una obra grande el mes que viene sin quedarnos sin caja?"></textarea></label>
+    </div>
+    <button class="btn pri" id="infGen" ${informeEnCurso?'disabled':''}>${icon('ia')} ${informeEnCurso?'Generando informe… '+seg+' s':'Generar informe'}</button>
+    ${hayDemo()?'<p class="mini" style="margin-top:10px">Ojo: hay datos de ejemplo cargados y van a entrar en el análisis.</p>':''}
+  </div></div>
+  <div class="card"><div class="card-h"><h2>Informes anteriores</h2><span class="sub">se guardan los últimos 12</span></div><div class="card-b">
+    ${lista.length ? `<table><tbody>${lista.map(x=>`<tr data-inf="${esc(x.id)}" style="cursor:pointer">
+        <td style="width:1%">${(c=>`<span class="chip ${c==='ok'?'g':c==='bad'?'r':c==='warn'?'o':''}">${esc((SEMAF[x.informe?.semaforo]||SEMAF.gris)[1])}</span>`)((SEMAF[x.informe?.semaforo]||SEMAF.gris)[0])}</td>
+        <td style="font-weight:600">${esc(x.informe?.titulo||'Informe')}</td>
+        <td class="mini" style="white-space:nowrap">${esc(x.generado||'')}${x.autor?' · '+esc(x.autor):''}</td></tr>`).join('')}</tbody></table>`
+      : '<p class="mini">Todavía no se generó ningún informe.</p>'}
+  </div></div>`;
+  view.querySelectorAll('[data-inf]').forEach(tr=>tr.onclick=()=>{ R.id=tr.dataset.inf; render(); });
+  $('#infGen').onclick=()=>{
+    const v=$('#infInfl').value.trim();
+    generarInforme(v===''?null:num(v), $('#infFoco').value.trim());
+  };
+  if(informeEnCurso) contarSegundos();
+}
+// Mientras se genera, el contador del botón avanza solo
+function contarSegundos(){
+  setTimeout(()=>{
+    const b=$('#infGen');
+    if(!informeEnCurso || !b) return;
+    b.innerHTML=`${icon('ia')} Generando informe… ${Math.round((Date.now()-informeEnCurso.desde)/1000)} s`;
+    contarSegundos();
+  },1000);
 }
 
 /* =========================================================

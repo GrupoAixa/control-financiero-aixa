@@ -1,0 +1,10 @@
+{
+  "name": "control-financiero-aixa",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Control financiero AIXA: sitio estático en docs/ y funciones de servidor en api/ (Vercel)",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0"
+  }
+}

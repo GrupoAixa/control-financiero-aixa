@@ -1,0 +1,7 @@
+{
+  "buildCommand": "",
+  "outputDirectory": "docs",
+  "functions": {
+    "api/informe-financiero.js": { "maxDuration": 300 }
+  }
+}
