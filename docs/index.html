@@ -582,7 +582,8 @@ function proyectarCaja(horizonte=90){
 // Datos de conexión del proyecto de Firebase. No son secretos (Firebase los expone en cualquier app web):
 // la protección real son las cuentas y las reglas de Firestore. Si se completan acá, cada equipo
 // solo tiene que poner email y contraseña; si quedan vacíos, la pantalla de ingreso los pide una vez.
-const CONEXION = {apiKey:'', projectId:'', appId:'', authDomain:'', empresaId:''};
+const CONEXION = {apiKey:'AIzaSyDSywFBMltfCIGb4X-HFMGKUO8iIxPNjf0', projectId:'control-financiero-aixa',
+  appId:'1:883792188033:web:28f967621b0d2688caf380', authDomain:'control-financiero-aixa.firebaseapp.com', empresaId:'principal'};
 const KEY_DUENO = 'obracontrol.dueno';   // de qué usuario y empresa son los datos guardados en este equipo
 
 const Cloud = {
@@ -637,7 +638,7 @@ const Cloud = {
       const c=this.cfg;
       this.app = this.fb.getApps && this.fb.getApps().length ? this.fb.getApp() : this.fb.initializeApp({
         apiKey:c.apiKey, authDomain:c.authDomain||(c.projectId+'.firebaseapp.com'),
-        projectId:c.projectId, appId:c.appId||'', storageBucket:c.projectId+'.appspot.com'
+        projectId:c.projectId, appId:c.appId||''
       });
       this.auth=this.fb.getAuth(this.app);
       this.db=this.fb.getFirestore(this.app);
