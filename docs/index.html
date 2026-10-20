@@ -243,7 +243,7 @@ body.bloqueado .login{display:flex;min-height:100vh;align-items:center;justify-c
 <script type="module">
 /* =========================================================
    Control financiero AIXA — gestión económica de obras, vehículos y estructura
-   Datos: navegador (localStorage) + respaldo JSON.
+   Datos: nube (Firebase), en memoria mientras hay sesión + respaldo JSON.
    Capa Store aislada para poder migrar a Firebase/Supabase sin tocar la app.
    ========================================================= */
 'use strict';
@@ -280,24 +280,19 @@ function normalizar(p){
 }
 
 const Store = {
-  data:null,
+  // Los datos viven en la nube: acá solo hay una copia en memoria mientras la sesión está abierta.
+  // "previos" son datos que versiones anteriores dejaban guardados en el navegador; se revisan al entrar.
+  data:null, previos:null,
   load(){
-    let raw = null;
+    this.data = structuredClone(DEF);
     try{
-      raw = localStorage.getItem(KEY);
-      this.data = raw ? normalizar(JSON.parse(raw)) : structuredClone(DEF);
-    }
-    catch(e){
-      // no pisar datos ilegibles: se apartan para poder recuperarlos a mano
-      try{ if(raw) localStorage.setItem(KEY+'.danado', raw); }catch(e2){}
-      this.data = structuredClone(DEF);
-    }
+      const raw = localStorage.getItem(KEY);
+      if(raw){ const p=normalizar(JSON.parse(raw)); if(COLS.some(k=>p[k].length)) this.previos=p; }
+    }catch(e){}
     return this.data;
   },
   save(silencioso, fecha){
     this.data.updatedAt = fecha || Date.now();
-    try{ localStorage.setItem(KEY, JSON.stringify(this.data)); }
-    catch(e){ toast('No se pudo guardar: almacenamiento lleno', true); }
     if(!silencioso) Cloud.programarSubida();
   },
   col(n){ return this.data[n]; },
@@ -669,28 +664,28 @@ const Cloud = {
 
   // Al entrar, la nube manda. Solo se suben los datos del equipo si son de este mismo usuario y empresa
   // y quedaron cambios sin subir, o si la nube todavía está vacía (primera vez).
+  // Al entrar se cargan los datos de la nube. Si el navegador tenía datos de versiones anteriores
+  // (que guardaban una copia local), se suben si la nube está vacía o se descargan como respaldo.
   async sincronizarAlEntrar(){
-    const dueno = this.user.uid+'|'+this.empresaId();
-    const mio = localStorage.getItem(KEY_DUENO)===dueno;
-    const tieneLocal = COLS.some(k=>Store.data[k].length);
     const snap = await this.fb.getDoc(this.ref());
+    const previos = Store.previos;
     if(snap.exists()){
-      const d=snap.data();
-      if(mio && (Store.data.updatedAt||0) > (d.updatedAt||0)) await this.subir({auto:true});
-      else {
-        if(!mio && tieneLocal) exportar('previo-al-ingreso');   // datos viejos de este equipo: se guardan por las dudas
-        this.aplicar(d.payload);
-      }
-    } else if(tieneLocal){
+      if(previos) exportar('previo-al-ingreso', previos);
+      this.aplicar(snap.data().payload);
+    } else if(previos){
+      Store.data = previos;
       await this.subir({auto:true});
     }
-    localStorage.setItem(KEY_DUENO, dueno);
+    Store.previos = null;
+    [KEY, KEY+'.danado', KEY_DUENO].forEach(k=>localStorage.removeItem(k));
   },
 
+  // Saca los datos de la memoria (en la nube no se toca nada)
   limpiarEquipo(){
-    [KEY, KEY+'.danado', KEY_DUENO].forEach(k=>localStorage.removeItem(k));
     Store.data=structuredClone(DEF);
   },
+
+  pendiente(){ return !!this.timer || this.estado==='subiendo'; },
 
   async entrar(email, pass){
     this.entrando=true;
@@ -739,7 +734,7 @@ const Cloud = {
     return true;
   },
 
-  // Cierra la sesión y borra los datos de este equipo; quedan solo en la nube
+  // Cierra la sesión; los datos siguen en la nube y se vuelven a ver al entrar
   async salir(){
     if(this.timer){ clearTimeout(this.timer); this.timer=null; await this.subir({auto:true}); }   // no perder lo último
     if(this.desuscribir){ this.desuscribir(); this.desuscribir=null; }
@@ -767,7 +762,7 @@ const Cloud = {
   programarSubida(){
     if(!this.user || !this.cfg || this.cfg.auto===false) return;
     clearTimeout(this.timer);
-    this.timer=setTimeout(()=>{ this.timer=null; this.subir({auto:true}); }, 1500);
+    this.timer=setTimeout(()=>{ this.timer=null; this.subir({auto:true}); }, 600);
   },
 
   async subir({auto=false}={}){
@@ -2136,7 +2131,7 @@ function vConfig(){
     </tbody></table>
     <p style="font-size:12.5px;color:var(--muted);margin:12px 0 14px;max-width:70ch">
       Los cambios se guardan en la nube apenas los cargás y les aparecen en vivo a los demás usuarios.
-      Al cerrar sesión se borran los datos de este equipo: quedan solo en la nube.
+      Los datos viven en la nube: se ven desde cualquier equipo al iniciar sesión y no quedan guardados en el navegador.
       Las cuentas las crea el administrador en la consola de Firebase (ver README.md).</p>
     <div class="row">
       <button class="btn dark" id="fbSubir">${icon('up')} Subir ahora</button>
@@ -2145,9 +2140,12 @@ function vConfig(){
     </div>
   </div></div>
 
-  <div class="card" style="margin-top:16px"><div class="card-h"><h2>Cargar datos de ejemplo</h2></div><div class="card-b">
-    <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Genera dos obras, un vehículo y gastos fijos para ver cómo funcionan todos los indicadores. Se suma a lo que ya tengas cargado.</p>
-    <button class="btn" id="demo">Cargar ejemplo</button>
+  <div class="card" style="margin-top:16px"><div class="card-h"><h2>Datos de ejemplo</h2></div><div class="card-b">
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Genera dos obras, un vehículo y gastos fijos para ver cómo funcionan todos los indicadores. Se suma a lo que ya tengas cargado y se puede borrar después sin tocar los datos reales.</p>
+    <div class="row">
+      <button class="btn" id="demo">Cargar ejemplo</button>
+      ${hayDemo()?`<button class="btn dgr" id="demoDel">${icon('del')} Borrar datos de ejemplo</button>`:''}
+    </div>
   </div></div>`;
 
   $('#saveCfg').onclick=()=>{
@@ -2175,16 +2173,18 @@ function vConfig(){
     exportar('previo-a-borrar');
     Store.data=structuredClone(DEF); Store.save(); toast('Datos borrados'); go('panel');
   });
-  $('#demo').onclick=()=>confirmDel('Se agregarán dos obras, un vehículo y gastos fijos de ejemplo a los datos de la empresa. Los van a ver todos los usuarios y después hay que borrarlos a mano.',cargarDemo,
-    {titulo:'Cargar datos de ejemplo', boton:'Cargar ejemplo', nota:'Conviene usarlo solo para probar, antes de cargar datos reales.'});
+  $('#demo').onclick=()=>confirmDel('Se agregarán dos obras, un vehículo y gastos fijos de ejemplo a los datos de la empresa. Los van a ver todos los usuarios hasta que se borren con "Borrar datos de ejemplo".',cargarDemo,
+    {titulo:'Cargar datos de ejemplo', boton:'Cargar ejemplo', nota:'Los datos reales no se tocan.'});
+  $('#demoDel')?.addEventListener('click', ()=>confirmDel('Se borrarán solo las obras, movimientos, vehículos y gastos de ejemplo, para todos los usuarios. Los datos reales quedan como están.',borrarDemo,
+    {titulo:'Borrar datos de ejemplo', boton:'Borrar ejemplo', nota:''}));
 
   $('#fbSubir').onclick=()=>Cloud.subir({});
   $('#fbBajar').onclick=()=>Cloud.bajar({});
   $('#fbSalir').onclick=()=>Cloud.salir();
 }
 
-function exportar(sufijo){
-  const blob=new Blob([JSON.stringify(Store.data,null,2)],{type:'application/json'});
+function exportar(sufijo, datos=Store.data){
+  const blob=new Blob([JSON.stringify(datos,null,2)],{type:'application/json'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
   a.download='control-financiero-aixa-'+today()+(sufijo?'-'+sufijo:'')+'.json';
@@ -2207,33 +2207,60 @@ function exportarCSV(){
 }
 
 function cargarDemo(){
+  // Todo lo de ejemplo queda marcado para poder borrarlo después sin tocar los datos reales
+  const add=(col,o)=>Store.add(col,{...o,demo:true});
   const hoy=new Date();
   const d=n=>new Date(hoy.getTime()-n*DAY).toISOString().slice(0,10);
-  const o1=Store.add('obras',{nombre:'Ampliación depósito Ruta 8',cliente:'Logística del Sur',estado:'Cobrada',presupuesto:18000000,
+  const o1=add('obras',{nombre:'Ampliación depósito Ruta 8',cliente:'Logística del Sur',estado:'Cobrada',presupuesto:18000000,
     fechaAceptacion:d(150),fechaEntregaPrev:d(90),fechaEntrega:d(84),condPago:'30% adelanto, saldo a 30 días'});
-  const o2=Store.add('obras',{nombre:'Playón hormigón Parque Industrial',cliente:'Metalúrgica Rivas',estado:'En ejecución',presupuesto:9500000,
+  const o2=add('obras',{nombre:'Playón hormigón Parque Industrial',cliente:'Metalúrgica Rivas',estado:'En ejecución',presupuesto:9500000,
     fechaAceptacion:d(60),fechaEntregaPrev:d(-10),condPago:'50% adelanto'});
   [[o1,'Adelanto',5400000,145],[o1,'Certificado',7000000,110],[o1,'Saldo final',5900000,60],
-   [o2,'Adelanto',4750000,55]].forEach(([o,t,m,dd])=>Store.add('ingresos',{obraId:o.id,tipo:t,monto:m,fecha:d(dd),medio:'Transferencia',concepto:t}));
+   [o2,'Adelanto',4750000,55]].forEach(([o,t,m,dd])=>add('ingresos',{obraId:o.id,tipo:t,monto:m,fecha:d(dd),medio:'Transferencia',concepto:t}));
   [[o1,'Materiales',4200000,140,138],[o1,'Mano de obra',3800000,120,120],[o1,'Subcontratos',2100000,100,70],[o1,'Fletes',450000,130,130],
    [o2,'Materiales',2600000,50,20],[o2,'Mano de obra',1500000,30,30]].forEach(([o,c,m,f,p])=>
-    Store.add('costos',{obraId:o.id,categoria:c,monto:m,fecha:d(f),fechaPago:d(p),pagado:true,proveedor:'Proveedor '+c,concepto:c}));
-  const v=Store.add('vehiculos',{nombre:'Hilux blanca',patente:'AB123CD',marca:'Toyota',modelo:'Hilux 2.8',anio:2019,combustible:'Diésel'});
+    add('costos',{obraId:o.id,categoria:c,monto:m,fecha:d(f),fechaPago:d(p),pagado:true,proveedor:'Proveedor '+c,concepto:c}));
+  const v=add('vehiculos',{nombre:'Hilux blanca',patente:'AB123CD',marca:'Toyota',modelo:'Hilux 2.8',anio:2019,combustible:'Diésel'});
   [[120,48200,62,74400],[95,49050,58,71800],[62,49910,61,77500],[28,50780,59,76700],[5,51600,57,75200]]
-    .forEach(([dd,odo,l,imp])=>Store.add('cargas',{vehiculoId:v.id,fecha:d(dd),odometro:odo,litros:l,importe:imp,tanqueLleno:true,estacion:'YPF'}));
+    .forEach(([dd,odo,l,imp])=>add('cargas',{vehiculoId:v.id,fecha:d(dd),odometro:odo,litros:l,importe:imp,tanqueLleno:true,estacion:'YPF'}));
   [['Service',185000,70,49500],['Cubiertas',920000,40,50100],['VTV',48000,25,0],['Peaje',12000,10,0]]
-    .forEach(([t,m,dd,odo])=>Store.add('vgastos',{vehiculoId:v.id,fecha:d(dd),tipo:t,monto:m,odometro:odo,detalle:t}));
+    .forEach(([t,m,dd,odo])=>add('vgastos',{vehiculoId:v.id,fecha:d(dd),tipo:t,monto:m,odometro:odo,detalle:t}));
   [['Alquiler del galpón','Alquiler',850000,'mensual'],['Sueldo administración','Sueldos',920000,'mensual'],
    ['Contador','Honorarios',180000,'mensual'],['Seguro de responsabilidad civil','Seguros',420000,'trimestral'],
    ['Luz, agua e internet','Servicios',210000,'mensual'],['Ingresos brutos y tasas','Impuestos y tasas',260000,'mensual']]
-    .forEach(([c,cat,m,p])=>Store.add('fijos',{concepto:c,categoria:cat,monto:m,periodicidad:p,activo:true}));
+    .forEach(([c,cat,m,p])=>add('fijos',{concepto:c,categoria:cat,monto:m,periodicidad:p,activo:true}));
   [[o1,'Materiales',3900000],[o1,'Mano de obra',3500000],[o1,'Subcontratos',2400000],[o1,'Fletes',400000],
-   [o2,'Materiales',2900000],[o2,'Mano de obra',1800000]].forEach(([o,r,m])=>Store.add('planes',{obraId:o.id,rubro:r,monto:m}));
-  Store.add('previsiones',{concepto:'Compra de hierro para el playón',tipo:'Egreso',monto:1800000,fecha:d(-14),obraId:o2.id});
-  Store.add('previsiones',{concepto:'Cobro certificado 1 Parque Industrial',tipo:'Ingreso',monto:2400000,fecha:d(-25),obraId:o2.id});
-  D().config.saldoInicial=3500000;
+   [o2,'Materiales',2900000],[o2,'Mano de obra',1800000]].forEach(([o,r,m])=>add('planes',{obraId:o.id,rubro:r,monto:m}));
+  add('previsiones',{concepto:'Compra de hierro para el playón',tipo:'Egreso',monto:1800000,fecha:d(-14),obraId:o2.id});
+  add('previsiones',{concepto:'Cobro certificado 1 Parque Industrial',tipo:'Ingreso',monto:2400000,fecha:d(-25),obraId:o2.id});
+  if(!num(D().config.saldoInicial)){ D().config.saldoInicial=3500000; D().config.saldoDemo=true; }
   Store.save();
   toast('Datos de ejemplo cargados'); go('panel');
+}
+
+// Reconoce lo de ejemplo: por la marca, o por su contenido exacto si se cargó antes de que existiera la marca
+function idsDemo(){
+  const obras=new Set(D().obras.filter(o=>o.demo ||
+    (o.nombre==='Ampliación depósito Ruta 8'&&o.cliente==='Logística del Sur') ||
+    (o.nombre==='Playón hormigón Parque Industrial'&&o.cliente==='Metalúrgica Rivas')).map(o=>o.id));
+  const vehic=new Set(D().vehiculos.filter(v=>v.demo || (v.nombre==='Hilux blanca'&&v.patente==='AB123CD')).map(v=>v.id));
+  const fijos=['Alquiler del galpón|850000','Sueldo administración|920000','Contador|180000',
+    'Seguro de responsabilidad civil|420000','Luz, agua e internet|210000','Ingresos brutos y tasas|260000'];
+  const es={
+    obras:x=>obras.has(x.id), vehiculos:x=>vehic.has(x.id),
+    ingresos:x=>obras.has(x.obraId), costos:x=>obras.has(x.obraId), planes:x=>obras.has(x.obraId), previsiones:x=>obras.has(x.obraId),
+    cargas:x=>vehic.has(x.vehiculoId), vgastos:x=>vehic.has(x.vehiculoId),
+    fijos:x=>fijos.includes(x.concepto+'|'+num(x.monto))
+  };
+  return (col,x)=> !!x.demo || !!(es[col]&&es[col](x));
+}
+const hayDemo = ()=>{ const esDemo=idsDemo(); return COLS.some(k=>D()[k].some(x=>esDemo(k,x))); };
+function borrarDemo(){
+  const esDemo=idsDemo();
+  COLS.forEach(k=>{ Store.data[k]=Store.data[k].filter(x=>!esDemo(k,x)); });
+  if(D().config.saldoDemo){ D().config.saldoInicial=0; delete D().config.saldoDemo; }
+  Store.save();
+  toast('Datos de ejemplo borrados'); go('panel');
 }
 
 /* =========================================================
@@ -2245,6 +2272,8 @@ Cloud.leerCfg();
 if(Cloud.activa()){ Acceso.cargando('Conectando…'); Cloud.init(); }
 else Acceso.mostrar();
 window.addEventListener('online', ()=>{ if(Cloud.user) Cloud.subir({auto:true}); });
+// Si quedan cambios sin llegar a la nube, el navegador pide confirmación antes de cerrar la pestaña
+window.addEventListener('beforeunload', e=>{ if(Cloud.user && (Cloud.pendiente() || Cloud.estado==='error')){ e.preventDefault(); e.returnValue=''; } });
 
 </script>
 </body>
