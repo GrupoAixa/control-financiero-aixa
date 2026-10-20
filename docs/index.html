@@ -236,16 +236,41 @@ const DEF = {
   fijos:[], planes:[], previsiones:[]
 };
 
+// Valida y limpia datos que llegan de afuera (respaldo, nube o navegador) antes de usarlos.
+// Si no tienen la forma esperada lanza un error y no se toca nada.
+const COLS = Object.keys(DEF).filter(k=>Array.isArray(DEF[k]));
+const esObj = x => x!==null && typeof x==='object' && !Array.isArray(x);
+function normalizar(p){
+  if(!esObj(p)) throw new Error('formato inválido');
+  if(!COLS.some(k=>Array.isArray(p[k])) && !esObj(p.config)) throw new Error('no parece un respaldo de este sistema');
+  const base = structuredClone(DEF);
+  COLS.forEach(k=>{
+    base[k] = (Array.isArray(p[k])?p[k]:[]).filter(esObj).map(o=>{
+      const r = {...o};
+      if(typeof r.id!=='string' || !r.id) r.id = uid();
+      // las fechas se leen con .slice(); un valor que no sea texto rompería las pantallas
+      Object.keys(r).forEach(c=>{ if(/^(fecha|desde|hasta)/i.test(c) && r[c]!=null && typeof r[c]!=='string') r[c]=''; });
+      return r;
+    });
+  });
+  base.config = Object.assign(structuredClone(DEF.config), esObj(p.config)?p.config:{});
+  base.updatedAt = num(p.updatedAt);
+  return base;
+}
+
 const Store = {
   data:null,
   load(){
+    let raw = null;
     try{
-      const raw = localStorage.getItem(KEY);
-      const base = structuredClone(DEF);
-      if(raw){ const p = JSON.parse(raw); Object.assign(base, p); base.config = Object.assign(structuredClone(DEF.config), p.config||{}); }
-      this.data = base;
+      raw = localStorage.getItem(KEY);
+      this.data = raw ? normalizar(JSON.parse(raw)) : structuredClone(DEF);
     }
-    catch(e){ this.data = structuredClone(DEF); }
+    catch(e){
+      // no pisar datos ilegibles: se apartan para poder recuperarlos a mano
+      try{ if(raw) localStorage.setItem(KEY+'.danado', raw); }catch(e2){}
+      this.data = structuredClone(DEF);
+    }
     return this.data;
   },
   save(silencioso){
@@ -530,6 +555,8 @@ const Cloud = {
   desuscribir:null,
   equipo(){ let id=localStorage.getItem('obracontrol.equipo'); if(!id){ id=uid(); localStorage.setItem('obracontrol.equipo',id); } return id; },
   empresaId(){ return (this.cfg && this.cfg.empresaId) ? this.cfg.empresaId : 'principal'; },
+  // Firestore admite hasta 1 MiB por documento; dejamos margen para los demás campos
+  LIMITE:1000000, AVISO:800000,
 
   leerCfg(){ try{ this.cfg = JSON.parse(localStorage.getItem(this.KEYC)||'null'); }catch(e){ this.cfg=null; } return this.cfg; },
   guardarCfg(c){ this.cfg=c; localStorage.setItem(this.KEYC, JSON.stringify(c)); },
@@ -588,16 +615,44 @@ const Cloud = {
   async entrar(email, pass){
     await this.cargarSDK();
     if(!this.auth) await this.init({silencioso:false});
+    // Las cuentas se crean a mano en la consola de Firebase: la app nunca registra usuarios nuevos,
+    // así nadie puede crearse una cuenta con un mail autorizado que todavía no se usó.
     try{
       await this.fb.signInWithEmailAndPassword(this.auth, email, pass);
       return true;
     }catch(e){
-      if(e.code==='auth/user-not-found' || e.code==='auth/invalid-credential'){
-        try{ await this.fb.createUserWithEmailAndPassword(this.auth, email, pass); return true; }
-        catch(e2){ toast('No se pudo entrar: '+(e2.code||e2.message), true); return false; }
-      }
-      toast('No se pudo entrar: '+(e.code||e.message), true); return false;
+      const msg={
+        'auth/invalid-credential':'email o contraseña incorrectos (o la cuenta todavía no fue creada en Firebase)',
+        'auth/user-not-found':'esa cuenta no existe; pedile al administrador que la cree en Firebase',
+        'auth/wrong-password':'contraseña incorrecta',
+        'auth/invalid-email':'el email no es válido',
+        'auth/too-many-requests':'demasiados intentos; esperá unos minutos',
+        'auth/user-disabled':'esa cuenta está deshabilitada',
+        'auth/network-request-failed':'sin conexión a internet'
+      }[e.code];
+      toast('No se pudo entrar: '+(msg||e.code||e.message), true); return false;
     }
+  },
+
+  async recuperar(email){
+    await this.cargarSDK();
+    if(!this.auth) await this.init({silencioso:false});
+    if(!this.auth) return false;
+    try{ await this.fb.sendPasswordResetEmail(this.auth, email); }
+    catch(e){ if(e.code==='auth/invalid-email'){ toast('El email no es válido', true); return false; } }
+    // Mismo mensaje exista o no la cuenta, para no revelar qué mails están registrados
+    toast('Si la cuenta existe, te llegó un mail para cambiar la contraseña');
+    return true;
+  },
+
+  // Aplica datos recibidos de la nube; si vienen dañados se ignoran y quedan los locales
+  aplicar(payload){
+    let datos;
+    try{ datos=normalizar(JSON.parse(payload)); }
+    catch(e){ toast('Los datos de la nube están dañados; se conservan los de este equipo', true); return false; }
+    Store.data=datos;
+    Store.save(true);
+    return true;
   },
 
   async salir(){ if(this.desuscribir){this.desuscribir();this.desuscribir=null;} if(this.auth) await this.fb.signOut(this.auth); this.user=null; this.setEstado('sinsesion'); render(); },
@@ -613,14 +668,9 @@ const Cloud = {
       const d=snap.data();
       if(d.equipo===this.equipo()) return;              // es mi propia escritura
       if((d.updatedAt||0) <= (Store.data.updatedAt||0)) return;
-      try{
-        const datos=JSON.parse(d.payload);
-        Store.data=Object.assign(structuredClone(DEF), datos);
-        Store.data.config=Object.assign(structuredClone(DEF.config), datos.config||{});
-        Store.save(true);
-        if(!ov.classList.contains('on')) render();      // no interrumpir si está editando algo
-        toast('Actualizado por '+(d.autor||'otro usuario'));
-      }catch(e){}
+      if(!this.aplicar(d.payload)) return;
+      if(!ov.classList.contains('on')) render();        // no interrumpir si está editando algo
+      toast('Actualizado por '+(d.autor||'otro usuario'));
     }, ()=>this.setEstado('error'));
   },
 
@@ -632,10 +682,18 @@ const Cloud = {
 
   async subir({auto=false}={}){
     if(!this.user){ if(!auto) toast('Primero iniciá sesión en la nube', true); return false; }
+    const payload = JSON.stringify(Store.data);
+    const peso = new Blob([payload]).size;
+    if(peso > this.LIMITE){
+      this.setEstado('error');
+      toast('Los datos superan el límite de la nube (1 MB). Descargá un respaldo y archivá obras viejas.', true);
+      return false;
+    }
+    if(peso > this.AVISO && !this.avisado){ this.avisado=true; toast('Los datos ya ocupan '+Math.round(peso/1000)+' KB de 1000 KB en la nube', true); }
     try{
       this.setEstado('subiendo');
       await this.fb.setDoc(this.ref(), {
-        payload: JSON.stringify(Store.data),
+        payload,
         updatedAt: Store.data.updatedAt || Date.now(),
         empresa: Store.data.config.empresa || '',
         equipo: this.equipo(),
@@ -663,10 +721,7 @@ const Cloud = {
         this.setEstado('conectado');
         return false;
       }
-      const datos=JSON.parse(d.payload);
-      Store.data = Object.assign(structuredClone(DEF), datos);
-      Store.data.config = Object.assign(structuredClone(DEF.config), datos.config||{});
-      Store.save(true);
+      if(!this.aplicar(d.payload)){ this.setEstado('error'); return false; }
       this.setEstado('conectado');
       toast(auto?'Datos actualizados desde la nube':'Datos bajados de la nube');
       render();
@@ -791,8 +846,8 @@ function barChart(series, {h=180, money:isMoney=true}={}){
   const bars = series.map((s,i)=>{
     const x = pad + i*((w-pad-8)/series.length);
     const ha = (s.a/max)*(h-40), hb=(s.b/max)*(h-40);
-    return `<rect x="${x}" y="${h-24-ha}" width="${bw}" height="${Math.max(ha,1)}" fill="var(--plano)" rx="1"><title>${s.k} · ingresos ${money(s.a)}</title></rect>
-    <rect x="${x+bw+gap}" y="${h-24-hb}" width="${bw}" height="${Math.max(hb,1)}" fill="var(--obra)" rx="1"><title>${s.k} · costos ${money(s.b)}</title></rect>
+    return `<rect x="${x}" y="${h-24-ha}" width="${bw}" height="${Math.max(ha,1)}" fill="var(--plano)" rx="1"><title>${esc(s.k)} · ingresos ${money(s.a)}</title></rect>
+    <rect x="${x+bw+gap}" y="${h-24-hb}" width="${bw}" height="${Math.max(hb,1)}" fill="var(--obra)" rx="1"><title>${esc(s.k)} · costos ${money(s.b)}</title></rect>
     <text x="${x+bw+gap/2}" y="${h-8}" font-size="9.5" fill="var(--muted)" text-anchor="middle" font-family="var(--mono)">${esc(s.k)}</text>`;
   }).join('');
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px" preserveAspectRatio="xMinYMid meet">
@@ -1007,7 +1062,7 @@ function vPanel(){
   view.innerHTML = `
   <div class="filters">
     <span class="mini">Período</span>
-    <select id="fAnio"><option value="todos">Todos los años</option>${aniosDisponibles().map(a=>`<option value="${a}" ${R.filtro.anio===a?'selected':''}>${a}</option>`).join('')}</select>
+    <select id="fAnio"><option value="todos">Todos los años</option>${aniosDisponibles().map(a=>`<option value="${esc(a)}" ${R.filtro.anio===a?'selected':''}>${esc(a)}</option>`).join('')}</select>
     <select id="fMes"><option value="todos">Todos los meses</option>${NOMBRES_MES.map((n,i)=>{const v=String(i+1).padStart(2,'0');return `<option value="${v}" ${R.filtro.mes===v?'selected':''}>${n}</option>`;}).join('')}</select>
     ${(R.filtro.anio!=='todos'||R.filtro.mes!=='todos')?`<button class="btn sm" id="fLimpiar">Quitar filtro</button>`:''}
     <span class="chip">${mesesCant} ${mesesCant===1?'mes':'meses'} con movimientos</span>
@@ -1906,7 +1961,8 @@ function vConfig(){
       Con esto los datos dejan de vivir solo en este navegador: se guardan en Firebase, los ven los tres usuarios y se actualizan en vivo.
       Cada uno entra con su email y su contraseña, pero comparten el mismo <b>código de empresa</b>, así que todos ven y editan lo mismo.
       El sitio sigue siendo el mismo de GitHub Pages, no hace falta servidor propio. Es gratis para un uso como el tuyo.
-      Seguí los pasos del archivo <b>LEEME.md</b> para obtener estos datos en firebase.google.com.</p>
+      Seguí los pasos del archivo <b>README.md</b> para obtener estos datos en firebase.google.com.
+      Las cuentas las crea el administrador en la consola de Firebase; acá solo se inicia sesión.</p>
     <div class="ff">
       <label class="fld"><span>API key</span><input id="fbKey" value="${esc(cc.apiKey||'')}" placeholder="AIzaSy..."></label>
       <label class="fld"><span>ID del proyecto</span><input id="fbProj" value="${esc(cc.projectId||'')}" placeholder="obra-control-1234"></label>
@@ -1923,7 +1979,8 @@ function vConfig(){
         ? `<button class="btn dark" id="fbSubir">${icon('up')} Subir ahora</button>
            <button class="btn" id="fbBajar">${icon('down')} Bajar de la nube</button>
            <button class="btn" id="fbSalir">Cerrar sesión</button>`
-        : `<button class="btn pri" id="fbEntrar">Conectar y entrar</button>`}
+        : `<button class="btn pri" id="fbEntrar">Conectar y entrar</button>
+           <button class="btn" id="fbOlvido">Olvidé mi contraseña</button>`}
       ${Cloud.activa()?`<button class="btn dgr push" id="fbOlvidar">Desvincular este equipo</button>`:''}
     </div>
     ${Cloud.user?`<div class="mini" style="margin-top:10px">Sesión: ${esc(Cloud.user.email||'')} · empresa "${esc(Cloud.empresaId())}" · última modificación local ${new Date(D().updatedAt||Date.now()).toLocaleString('es-AR')}</div>`:''}
@@ -1938,20 +1995,26 @@ function vConfig(){
     Object.assign(D().config,{empresa:$('#cEmp').value.trim()||'Mi empresa', tasa:num($('#cTasa').value), margenObj:num($('#cMargen').value)});
     Store.save(); toast('Ajustes guardados'); render();
   };
-  $('#expJson').onclick=exportar;
+  $('#expJson').onclick=()=>exportar();
   $('#expCsv').onclick=exportarCSV;
   $('#impJson').onclick=()=>$('#fileIn').click();
   $('#fileIn').onchange=e=>{
     const f=e.target.files[0]; if(!f) return;
+    if(f.size > 20e6) return toast('El archivo es demasiado grande para ser un respaldo', true);
     const r=new FileReader();
-    r.onload=()=>{ try{ const d=JSON.parse(r.result);
-      confirmDel('Se reemplazarán todos los datos actuales por los del respaldo.',()=>{
-        Store.data=Object.assign(structuredClone(DEF),d); Store.save(); toast('Respaldo restaurado'); go('panel');
+    r.onload=()=>{ try{ const d=normalizar(JSON.parse(r.result));
+      const n=COLS.reduce((s,k)=>s+d[k].length,0);
+      const nube=Cloud.user?' Como la nube está conectada, también se reemplazarán para los demás usuarios.':'';
+      confirmDel(`Se reemplazarán todos los datos actuales por los del respaldo (${d.obras.length} obras, ${n} registros en total). Antes se descargará automáticamente un respaldo de los datos actuales.${nube}`,()=>{
+        exportar('previo-a-restaurar');
+        d.updatedAt=Date.now();
+        Store.data=d; Store.save(); toast('Respaldo restaurado'); go('panel');
       });
     }catch(err){ toast('El archivo no es un respaldo válido', true); } };
     r.readAsText(f); e.target.value='';
   };
-  $('#wipe').onclick=()=>confirmDel('Se borrarán TODAS las obras, movimientos, vehículos y gastos fijos.',()=>{
+  $('#wipe').onclick=()=>confirmDel('Se borrarán TODAS las obras, movimientos, vehículos y gastos fijos'+(Cloud.user?', también en la nube para todos los usuarios':'')+'. Antes se descargará un respaldo automáticamente.',()=>{
+    exportar('previo-a-borrar');
     Store.data=structuredClone(DEF); Store.save(); toast('Datos borrados'); go('panel');
   });
   $('#demo').onclick=cargarDemo;
@@ -1963,12 +2026,20 @@ function vConfig(){
     const cfg=leerFb(), pass=$('#fbPass').value;
     if(!cfg.apiKey||!cfg.projectId) return toast('Faltan la API key y el ID del proyecto', true);
     if(!cfg.email||pass.length<6) return toast('Completá email y una contraseña de al menos 6 caracteres', true);
+    if(!/^[A-Za-z0-9_-]{1,64}$/.test(cfg.empresaId)) return toast('El código de empresa solo puede tener letras, números, guiones y guiones bajos', true);
     Cloud.guardarCfg(cfg);
     const b=$('#fbEntrar'); b.textContent='Conectando…'; b.disabled=true;
     await Cloud.init({silencioso:false});
     const ok=await Cloud.entrar(cfg.email, pass);
     if(ok){ toast('Conectado a la nube'); await Cloud.bajar({auto:true}); }
     render();
+  });
+  $('#fbOlvido')?.addEventListener('click', async ()=>{
+    const cfg=leerFb();
+    if(!cfg.apiKey||!cfg.projectId) return toast('Faltan la API key y el ID del proyecto', true);
+    if(!cfg.email) return toast('Escribí tu email para recibir el enlace', true);
+    Cloud.guardarCfg(cfg);
+    await Cloud.recuperar(cfg.email);
   });
   $('#fbSubir')?.addEventListener('click', ()=>Cloud.subir({}));
   $('#fbBajar')?.addEventListener('click', ()=>Cloud.bajar({}));
@@ -1979,11 +2050,11 @@ function vConfig(){
   $('#fbAuto')?.addEventListener('change', e=>{ if(Cloud.cfg){ Cloud.cfg.auto=e.target.checked; Cloud.guardarCfg(Cloud.cfg); } });
 }
 
-function exportar(){
+function exportar(sufijo){
   const blob=new Blob([JSON.stringify(Store.data,null,2)],{type:'application/json'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  a.download='control-financiero-aixa-'+today()+'.json';
+  a.download='control-financiero-aixa-'+today()+(sufijo?'-'+sufijo:'')+'.json';
   a.click(); URL.revokeObjectURL(a.href); toast('Respaldo descargado');
 }
 function exportarCSV(){
@@ -1994,7 +2065,9 @@ function exportarCSV(){
   D().vgastos.forEach(x=>lines.push(['Vehículo',Store.get('vehiculos',x.vehiculoId)?.nombre||'',x.fecha,x.tipo,x.detalle,'','','',num(x.monto)]));
   D().cargas.forEach(x=>lines.push(['Combustible',Store.get('vehiculos',x.vehiculoId)?.nombre||'',x.fecha,'Carga',x.litros+' l',x.estacion||'','','',num(x.importe)]));
   D().fijos.forEach(x=>lines.push(['Gasto fijo','',x.desde||'',x.categoria,x.concepto,x.periodicidad,'','',num(x.monto)]));
-  const csv='\uFEFF'+lines.map(r=>r.map(c=>`"${String(c??'').replace(/"/g,'""')}"`).join(';')).join('\n');
+  // Un texto que empieza con = + - @ Excel lo toma como f\u00F3rmula: se antepone ' para que quede como texto
+  const celda=c=>{ if(typeof c==='number') return String(c); let s=String(c??''); if(/^[=+\-@\t\r]/.test(s)) s="'"+s; return `"${s.replace(/"/g,'""')}"`; };
+  const csv='\uFEFF'+lines.map(r=>r.map(celda).join(';')).join('\n');
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
   a.download='control-financiero-aixa-'+today()+'.csv'; a.click(); URL.revokeObjectURL(a.href); toast('CSV descargado');

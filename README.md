@@ -36,7 +36,10 @@ Usamos **Firebase** (de Google). El plan gratuito alcanza de sobra para esto.
    - `apiKey`
    - `projectId`
    - `appId`
-4. En el menú **Compilación → Authentication → Comenzar**, habilitá el proveedor **Correo electrónico/contraseña**.
+4. En el menú **Compilación → Authentication → Comenzar**, habilitá el proveedor **Correo electrónico/contraseña**. Después:
+   - En **Authentication → Users → Agregar usuario**, creá una cuenta por cada persona (email y una contraseña inicial). La app **no** crea cuentas: solo inicia sesión.
+   - En **Authentication → Settings → Acciones del usuario**, destildá **Habilitar creación (registro)**. Así nadie puede registrarse por su cuenta, aunque consiga la API key.
+   - Cada usuario puede cambiar su contraseña desde la app con el botón **Olvidé mi contraseña** (le llega un mail).
 5. En **Compilación → Firestore Database → Crear base de datos**, elegí modo producción y la región `southamerica-east1` (São Paulo, la más cercana).
 6. En Firestore, pestaña **Reglas**, pegá esto y publicá:
 
@@ -44,19 +47,27 @@ Usamos **Firebase** (de Google). El plan gratuito alcanza de sobra para esto.
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /empresas/{empresa} {
-      allow read, write: if request.auth != null
+    function autorizado() {
+      return request.auth != null
         && request.auth.token.email in [
              'vos@tuempresa.com',
              'socio@tuempresa.com',
              'administracion@tuempresa.com'
            ];
     }
+    match /empresas/{empresa} {
+      allow read: if autorizado();
+      // Solo se aceptan documentos con la forma que guarda la app
+      allow create, update: if autorizado()
+        && request.resource.data.payload is string
+        && request.resource.data.updatedAt is number;
+      allow delete: if false;
+    }
   }
 }
 ```
 
-Cambiá esos tres mails por los reales. **Solo esas direcciones pueden leer o escribir los datos**, aunque el repositorio de GitHub sea público y cualquiera vea el código. Si mañana entra alguien más al equipo, agregás su mail a esa lista y publicás de nuevo las reglas; si alguien se va, lo sacás y pierde el acceso al instante.
+Cambiá esos tres mails por los reales (en minúsculas, tal como figuran en **Authentication → Users**). La regla también impide borrar el documento de la empresa desde afuera de la consola. **Solo esas direcciones pueden leer o escribir los datos**, aunque el repositorio de GitHub sea público y cualquiera vea el código. Si mañana entra alguien más al equipo, agregás su mail a esa lista y publicás de nuevo las reglas; si alguien se va, lo sacás y pierde el acceso al instante.
 
 7. En **Authentication → Settings → Dominios autorizados**, agregá `grupoaixa.github.io`.
 
@@ -65,7 +76,7 @@ Cambiá esos tres mails por los reales. **Solo esas direcciones pueden leer o es
 1. Abrí el sitio → **Ajustes y datos → Sincronización en la nube**.
 2. Pegá `apiKey`, `projectId` y `appId`.
 3. En **Código de empresa** dejá `principal` (o el que quieras, pero **todos tienen que escribir exactamente el mismo**).
-4. Poné tu email y una contraseña de al menos 6 caracteres. La primera vez crea la cuenta sola.
+4. Poné tu email y la contraseña de la cuenta que se creó en Firebase (paso 4 de arriba).
 5. **Conectar y entrar**.
 
 Repetí los pasos 1 a 5 en la compu de cada uno y en cada celular, cambiando solo el email y la contraseña. Todos ven los mismos datos.
@@ -77,6 +88,12 @@ Repetí los pasos 1 a 5 en la compu de cada uno y en cada celular, cambiando sol
 ## 3. Respaldos
 
 Aun con la nube activada, conviene bajar de vez en cuando el respaldo `.json` desde **Ajustes y datos → Descargar respaldo** y guardarlo en Drive. Es el archivo que te permite restaurar todo en cualquier momento.
+
+Al **restaurar** un respaldo o **borrar todos los datos**, la app descarga primero, automáticamente, un respaldo de lo que había (archivo terminado en `-previo-a-restaurar.json` o `-previo-a-borrar.json`). Ojo: con la nube conectada, esos cambios se aplican también para los demás usuarios.
+
+La nube guarda todo en un único documento, que Firebase limita a 1 MB. La app avisa cuando los datos pasan los 800 KB; si se llega al límite, conviene archivar las obras viejas en un respaldo y sacarlas del sistema.
+
+En una computadora compartida, al terminar usá **Cerrar sesión** y, si no la vas a volver a usar, **Desvincular este equipo**.
 
 También podés exportar a CSV para abrir los movimientos en Excel.
 
