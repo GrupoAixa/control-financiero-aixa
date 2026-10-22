@@ -2120,10 +2120,10 @@ const sinVacios = o => Object.fromEntries(Object.entries(o).filter(([,v])=>v!==n
 function datosParaIA(inflacion){
   const c=consolidado(), cfg=D().config;
   const coef = c.totI>0 ? c.totC/c.totI : null;
+  // Serie mensual con el mismo criterio que el consolidado: cobros por fecha de cobro, costos por fecha de pago
   const meses={};
-  const sumar=(f,k,m)=>{ const mk=monthKey(f); if(!mk) return; (meses[mk]=meses[mk]||{mes:mk,ingresos:0,costos:0})[k]+=num(m); };
-  D().ingresos.forEach(x=>sumar(x.fecha,'ingresos',x.monto));
-  D().costos.forEach(x=>sumar(x.fecha,'costos',x.monto));
+  c.flows.forEach(f=>{ const mk=monthKey(f.d); if(!mk) return; const m=(meses[mk]=meses[mk]||{mes:mk,ingresos:0,costos:0});
+    if(f.m>0) m.ingresos+=f.m; else m.costos-=f.m; });
   const estructura={};
   D().fijos.filter(f=>f.activo!==false).forEach(f=>{ const k=f.categoria||'Otros'; estructura[k]=(estructura[k]||0)+fijoMensual(f); });
   const p=proyectarCaja(90);
