@@ -3,7 +3,7 @@
 Partes del sistema:
 
 - `docs/index.html`: la app completa (un solo archivo, no hay que compilar nada).
-- `api/informe-financiero.js`: función de servidor que genera el **informe con IA** (Claude). Es la única que conoce la clave de Anthropic.
+- `api/`: funciones de servidor que usan la IA (Claude): `informe-financiero.js` (informe), `extraer-factura.js` (lee facturas) y `chat.js` (asistente). Son las únicas que conocen la clave de Anthropic; `_auth.js` verifica la sesión y el mail antes de cada uso.
 - **Firebase**: inicios de sesión y datos (plan gratuito).
 - **Vercel**: publica la app y la función de servidor (igual que maderogest).
 
@@ -18,7 +18,7 @@ En el celular, abrí la dirección del sitio y usá "Agregar a pantalla de inici
 3. En **Environment Variables** cargá:
    - `ANTHROPIC_API_KEY`: la clave de <https://console.anthropic.com> (**Settings → API Keys**). Nunca la pongas en el código.
    - `FIREBASE_API_KEY`: la misma `apiKey` del proyecto de Firebase.
-   - `EMAILS_AUTORIZADOS`: los mails que pueden generar informes, separados por coma (los mismos de las reglas de Firestore).
+   - `EMAILS_AUTORIZADOS`: los mails que pueden usar la IA (informes, facturas y asistente), separados por coma (los mismos de las reglas de Firestore).
 4. **Deploy**. Vercel te da una dirección del tipo `control-financiero-aixa.vercel.app`.
 5. En Firebase, **Authentication → Settings → Dominios autorizados**, agregá esa dirección de Vercel.
 
@@ -69,17 +69,21 @@ service cloud.firestore {
     }
     match /empresas/{empresa} {
       allow read: if autorizado();
-      // Solo se aceptan documentos con la forma que guarda la app
-      allow create, update: if autorizado()
-        && request.resource.data.payload is string
-        && request.resource.data.updatedAt is number;
+      allow create, update: if autorizado();
       allow delete: if false;
+      // Un documento por obra, cobro, costo, vehículo, etc.
+      match /{coleccion}/{registro} {
+        allow read: if autorizado();
+        allow write: if autorizado()
+          && coleccion in ["obras", "ingresos", "costos", "vehiculos", "cargas",
+                           "vgastos", "fijos", "planes", "previsiones", "informes"];
+      }
     }
   }
 }
 ```
 
-Cambiá esos tres mails por los reales (en minúsculas, tal como figuran en **Authentication → Users**). La regla también impide borrar el documento de la empresa desde afuera de la consola. **Solo esas direcciones pueden leer o escribir los datos**, aunque el repositorio de GitHub sea público y cualquiera vea el código. Si mañana entra alguien más al equipo, agregás su mail a esa lista y publicás de nuevo las reglas; si alguien se va, lo sacás y pierde el acceso al instante.
+Cambiá esos tres mails por los reales (en minúsculas, tal como figuran en **Authentication → Users**). Las reglas también impiden borrar el documento de la empresa y escribir en colecciones que la app no usa. **Solo esas direcciones pueden leer o escribir los datos**, aunque el repositorio de GitHub sea público y cualquiera vea el código. Si mañana entra alguien más al equipo, agregás su mail a esa lista y publicás de nuevo las reglas; si alguien se va, lo sacás y pierde el acceso al instante.
 
 7. En **Authentication → Settings → Dominios autorizados**, agregá la dirección de Vercel (y `grupoaixa.github.io` mientras siga publicado ahí).
 
@@ -101,7 +105,11 @@ Aun con la nube activada, conviene bajar de vez en cuando el respaldo `.json` de
 
 Al **restaurar** un respaldo o **borrar todos los datos**, la app descarga primero, automáticamente, un respaldo de lo que había (archivo terminado en `-previo-a-restaurar.json` o `-previo-a-borrar.json`). Ojo: con la nube conectada, esos cambios se aplican también para los demás usuarios.
 
-La nube guarda todo en un único documento, que Firebase limita a 1 MB. La app avisa cuando los datos pasan los 800 KB; si se llega al límite, conviene archivar las obras viejas en un respaldo y sacarlas del sistema.
+**Cómo se guardan los datos en la nube:** cada obra, cobro, costo, vehículo, gasto fijo e informe es un documento propio dentro de `empresas/principal` (por ejemplo `empresas/principal/costos/{id}`). Al guardar, la app sube solo lo que cambió, y cada equipo recibe en vivo solo lo que cambian los demás. Así no hay límite de tamaño y dos personas pueden trabajar a la vez en cosas distintas sin pisarse (si editan exactamente el mismo registro al mismo tiempo, queda el último).
+
+La primera vez que se entra con esta versión, la app pasa sola los datos del formato anterior (un único bloque) al formato por registros. El bloque viejo queda guardado sin tocar en el documento de la empresa, como respaldo.
+
+**Plan gratuito de Firebase:** permite 50.000 lecturas y 20.000 escrituras por día. Cada vez que alguien entra, la app lee una vez todos los registros (por ejemplo, 3.000 registros = 3.000 lecturas); después solo lee lo que cambia. Para una empresa con varios años de datos y pocos usuarios alcanza de sobra; si algún día no alcanzara, el plan Blaze cobra centavos de dólar por cada 100.000 lecturas.
 
 En una computadora compartida, al terminar usá **Salir**.
 
@@ -113,6 +121,8 @@ También podés exportar a CSV para abrir los movimientos en Excel.
 
 ## 4. Cómo está pensado el sistema
 
+- **Facturas con IA**: en **Cargar movimiento → Una factura de proveedor, con IA** (o en la pestaña Costos de una obra → **Desde factura**) se saca una foto o se sube el PDF de una factura. Claude completa proveedor, CUIT, fecha, vencimiento, monto, categoría, comprobante y la obra probable; el formulario se abre para revisarlo antes de guardar y avisa si ese comprobante ya estaba cargado. Cuesta aproximadamente US$ 0,02 a 0,05 por factura.
+- **Asistente IA**: un chat para preguntar en lenguaje natural ("¿qué cliente me paga más tarde?", "¿cuánto gastamos en fletes este año?"). Claude tiene los indicadores y el detalle de los movimientos de los últimos 36 meses. La primera pregunta de cada conversación cuesta aproximadamente US$ 0,05 a 0,25 según la cantidad de datos; las siguientes, mucho menos, porque los datos quedan en caché. La conversación no se guarda.
 - **Informe con IA**: Claude analiza los indicadores del sistema (rentabilidad, punto de equilibrio, margen de seguridad, plazos de cobro y pago, ciclo de caja, caja proyectada, obras y estructura) con el marco de la contabilidad gerencial y escribe un informe para la dirección con riesgos y recomendaciones priorizadas. Se puede indicar la inflación del período y un foco ("¿podemos tomar una obra grande?"). Se guardan los últimos 12 informes y se pueden imprimir o guardar en PDF.
 - **Obra**: la unidad de análisis. Tiene presupuesto, fechas (aceptación / entrega prevista / entrega real), sus ingresos y sus costos.
 - **Ingresos**: cada cobro con su fecha real. De acá salen el plazo de cobro, el VAN y la TIR.

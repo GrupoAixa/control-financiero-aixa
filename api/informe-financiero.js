@@ -3,37 +3,9 @@
 // La clave de Anthropic vive solo acá (variable de entorno en Vercel); el navegador nunca la ve.
 // Solo responde a usuarios con sesión de Firebase válida y email en EMAILS_AUTORIZADOS.
 import Anthropic from "@anthropic-ai/sdk";
+import { verificarSesion, leerJson, exigirClave, httpError, responderError } from "./_auth.js";
 
-const FIREBASE_API_KEY = (process.env.FIREBASE_API_KEY || "").trim();
-const EMAILS_AUTORIZADOS = (process.env.EMAILS_AUTORIZADOS || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
 const MAX_DATOS = 600_000; // caracteres de JSON; un informe normal usa una fracción de esto
-
-function httpError(status, message) { const e = new Error(message); e.status = status; return e; }
-
-// Valida el token de sesión de Firebase con la API de Identity Toolkit (no hace falta cuenta de servicio)
-async function verificarSesion(req) {
-  const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  if (!token) throw httpError(401, "Falta iniciar sesión.");
-  if (!FIREBASE_API_KEY) throw httpError(500, "Falta configurar FIREBASE_API_KEY en Vercel.");
-  if (!EMAILS_AUTORIZADOS.length) throw httpError(500, "Falta configurar EMAILS_AUTORIZADOS en Vercel.");
-  const r = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(FIREBASE_API_KEY)}`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken: token }),
-  });
-  const d = await r.json().catch(() => ({}));
-  const u = d.users?.[0];
-  if (!r.ok || !u?.email) throw httpError(401, "Sesión inválida o vencida. Volvé a iniciar sesión.");
-  if (u.disabled) throw httpError(403, "Tu cuenta está deshabilitada.");
-  if (!EMAILS_AUTORIZADOS.includes(u.email.toLowerCase())) throw httpError(403, "Tu cuenta no tiene permiso para generar informes.");
-  return u;
-}
-
-async function leerJson(req) {
-  if (req.body && typeof req.body === "object") return req.body;
-  if (typeof req.body === "string") return JSON.parse(req.body || "{}");
-  const partes = [];
-  for await (const c of req) partes.push(c);
-  return JSON.parse(Buffer.concat(partes).toString("utf8") || "{}");
-}
 
 const TEXTO = { type: "string" };
 const LISTA = { type: "array", items: TEXTO };
@@ -103,7 +75,7 @@ export default async function handler(req, res) {
     if (!datos || typeof datos !== "object" || Array.isArray(datos)) throw httpError(400, "Faltan los datos para el informe.");
     const json = JSON.stringify(datos);
     if (json.length > MAX_DATOS) throw httpError(413, "Hay demasiados datos para un solo informe. Elegí un período más corto.");
-    if (!process.env.ANTHROPIC_API_KEY) throw httpError(500, "Falta configurar ANTHROPIC_API_KEY en Vercel.");
+    exigirClave();
     const pedido = typeof foco === "string" && foco.trim() ? `\n\nFoco pedido por el usuario: ${foco.trim().slice(0, 500)}` : "";
 
     const client = new Anthropic();
@@ -127,16 +99,6 @@ export default async function handler(req, res) {
     const generado = new Date().toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
     res.status(200).json({ informe, generado });
   } catch (e) {
-    if (e instanceof Anthropic.APIError) {
-      console.error("Anthropic API error", e.status, e.message);
-      const msg = e.status === 401 ? "La clave de Anthropic es inválida."
-        : e.status === 429 ? "Claude está saturado o se agotó el crédito. Probá en un rato."
-        : e.status === 400 ? `Claude rechazó el pedido: ${e.message}`
-        : "Error al consultar a Claude. Probá de nuevo.";
-      return res.status(502).json({ error: msg });
-    }
-    const status = e.status || 500;
-    if (status >= 500) console.error(e);
-    res.status(status).json({ error: e.message || "Error interno" });
+    responderError(res, e);
   }
 }

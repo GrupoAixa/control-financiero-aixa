@@ -282,6 +282,46 @@ tfoot td{border-top:1px solid var(--line);border-bottom:0;font-weight:600;backgr
 .inf-sec .card-b p:last-child{margin-bottom:0}
 .inf-lista{padding-left:18px;font-size:13.5px;line-height:1.6}
 .inf-sec td{vertical-align:top;font-size:13px}
+/* Lector de facturas */
+.zona-archivo{display:flex;flex-direction:column;align-items:center;gap:6px;border:2px dashed var(--borde-input);border-radius:14px;padding:30px 16px;cursor:pointer;text-align:center;transition:.15s;background:var(--surface-2)}
+.zona-archivo:hover,.zona-archivo.encima{border-color:var(--obra);background:var(--obra-soft)}
+.zona-archivo svg{width:26px;height:26px;stroke:var(--obra);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.zona-archivo b{font-size:14px;font-weight:600}
+.zona-archivo span{font-size:12.5px;color:var(--muted)}
+.leyendo{display:flex;gap:14px;align-items:center;padding:18px 4px}
+.girando{width:26px;height:26px;border-radius:50%;border:3px solid var(--pista);border-top-color:var(--obra);animation:gira .8s linear infinite;flex:none}
+@keyframes gira{to{transform:rotate(360deg)}}
+
+/* Asistente IA */
+.chat{max-width:860px;margin:0 auto;display:flex;flex-direction:column;min-height:calc(100vh - 160px)}
+.chat-msgs{flex:1;display:flex;flex-direction:column;gap:18px;padding-bottom:18px}
+.chat-vacio{text-align:center;padding:40px 10px 20px}
+.chat-ico{width:52px;height:52px;border-radius:16px;margin:0 auto 14px;display:grid;place-items:center;background:linear-gradient(135deg,#E85D04,#F59E4B);color:#fff;box-shadow:var(--sombra-lg)}
+.chat-ico svg{width:26px;height:26px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linejoin:round}
+.chat-vacio h2{font-size:22px;font-weight:600;letter-spacing:-.02em}
+.chat-vacio p{color:var(--muted);font-size:14px;max-width:56ch;margin:8px auto 22px;line-height:1.55}
+.chat-sug{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+.chat-sug .btn{border-radius:99px;font-weight:400;white-space:normal;text-align:left}
+.msg{display:flex;gap:12px;align-items:flex-start}
+.msg.yo{justify-content:flex-end}
+.msg.yo .burbuja{background:var(--ink);color:#fff;border-radius:16px 16px 4px 16px;padding:11px 15px;max-width:75%;white-space:pre-wrap;font-size:14px;line-height:1.5}
+[data-tema="oscuro"] .msg.yo .burbuja{background:#2C3D4A}
+.msg.ia .burbuja{background:var(--surface);border:1px solid var(--line);border-radius:4px 16px 16px 16px;padding:14px 18px;max-width:calc(100% - 44px);box-shadow:var(--sombra);font-size:14px;line-height:1.6;min-width:60px}
+.av-ia{width:32px;height:32px;border-radius:10px;flex:none;display:grid;place-items:center;background:linear-gradient(135deg,#E85D04,#F59E4B);color:#fff}
+.av-ia svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linejoin:round}
+.md p{margin:0 0 9px} .md p:last-child{margin-bottom:0}
+.md ul,.md ol{margin:4px 0 10px 20px} .md li{margin:3px 0}
+.md h4{font-size:14px;font-weight:600;margin:12px 0 6px}
+.md table{margin:6px 0 12px;font-size:13px} .md td,.md th{padding:7px 10px}
+.pensando{display:inline-flex;gap:4px;padding:4px 0}
+.pensando i{width:7px;height:7px;border-radius:50%;background:var(--muted-2);animation:salta 1.2s infinite ease-in-out}
+.pensando i:nth-child(2){animation-delay:.15s} .pensando i:nth-child(3){animation-delay:.3s}
+@keyframes salta{0%,80%,100%{opacity:.3;transform:none}40%{opacity:1;transform:translateY(-4px)}}
+.chat-entrada{position:sticky;bottom:12px;display:flex;gap:10px;align-items:flex-end;background:var(--surface);border:1px solid var(--borde-input);border-radius:16px;padding:8px 8px 8px 16px;box-shadow:var(--sombra-lg)}
+.chat-entrada textarea{flex:1;border:0;background:none;resize:none;font-size:14.5px;line-height:1.5;padding:8px 0;max-height:160px;outline:none;color:var(--text)}
+.chat-entrada .btn{border-radius:11px;padding:10px 12px}
+.chat-nota{text-align:center;margin-top:12px}
+
 /* Informe mensual: en pantalla se ve como una hoja A4 */
 .reporte{background:var(--surface);max-width:920px;margin:0 auto;border-radius:12px;box-shadow:var(--sombra-lg);padding:40px 44px;border:1px solid var(--line)}
 .reporte section{margin-top:28px;break-inside:avoid}
@@ -471,19 +511,19 @@ const DEF = {
 // Si no tienen la forma esperada lanza un error y no se toca nada.
 const COLS = Object.keys(DEF).filter(k=>Array.isArray(DEF[k]));
 const esObj = x => x!==null && typeof x==='object' && !Array.isArray(x);
+// Un registro (obra, cobro, costo…): id válido como nombre de documento y fechas siempre como texto
+function normalizarRegistro(o){
+  const r = {...o};
+  if(typeof r.id!=='string' || !/^[A-Za-z0-9_-]{1,100}$/.test(r.id)) r.id = uid();
+  // las fechas se leen con .slice(); un valor que no sea texto rompería las pantallas
+  Object.keys(r).forEach(c=>{ if(/^(fecha|desde|hasta)/i.test(c) && r[c]!=null && typeof r[c]!=='string') r[c]=''; });
+  return r;
+}
 function normalizar(p){
   if(!esObj(p)) throw new Error('formato inválido');
   if(!COLS.some(k=>Array.isArray(p[k])) && !esObj(p.config)) throw new Error('no parece un respaldo de este sistema');
   const base = structuredClone(DEF);
-  COLS.forEach(k=>{
-    base[k] = (Array.isArray(p[k])?p[k]:[]).filter(esObj).map(o=>{
-      const r = {...o};
-      if(typeof r.id!=='string' || !r.id) r.id = uid();
-      // las fechas se leen con .slice(); un valor que no sea texto rompería las pantallas
-      Object.keys(r).forEach(c=>{ if(/^(fecha|desde|hasta)/i.test(c) && r[c]!=null && typeof r[c]!=='string') r[c]=''; });
-      return r;
-    });
-  });
+  COLS.forEach(k=>{ base[k] = (Array.isArray(p[k])?p[k]:[]).filter(esObj).map(normalizarRegistro); });
   base.config = Object.assign(structuredClone(DEF.config), esObj(p.config)?p.config:{});
   base.updatedAt = num(p.updatedAt);
   return base;
@@ -785,11 +825,9 @@ const KEY_DUENO = 'obracontrol.dueno';   // de qué usuario y empresa son los da
 const Cloud = {
   KEYC:'obracontrol.cloud',
   cfg:null, app:null, auth:null, db:null, fb:null, user:null, estado:'off', timer:null, subiendo:false,
-  desuscribir:null, entrando:false,
+  entrando:false,
   equipo(){ let id=localStorage.getItem('obracontrol.equipo'); if(!id){ id=uid(); localStorage.setItem('obracontrol.equipo',id); } return id; },
   empresaId(){ return (this.cfg && this.cfg.empresaId) ? this.cfg.empresaId : 'principal'; },
-  // Firestore admite hasta 1 MiB por documento; dejamos margen para los demás campos
-  LIMITE:1000000, AVISO:800000,
 
   fija(){ return !!(CONEXION.apiKey && CONEXION.projectId); },
   leerCfg(){
@@ -848,7 +886,6 @@ const Cloud = {
             try{
               await this.sincronizarAlEntrar();
               this.setEstado('conectado');
-              this.escuchar();
               Acceso.abrir();
             }catch(e){
               Acceso.error = e.code==='permission-denied'
@@ -873,27 +910,44 @@ const Cloud = {
     }
   },
 
-  // Al entrar, la nube manda. Solo se suben los datos del equipo si son de este mismo usuario y empresa
-  // y quedaron cambios sin subir, o si la nube todavía está vacía (primera vez).
-  // Al entrar se cargan los datos de la nube. Si el navegador tenía datos de versiones anteriores
-  // (que guardaban una copia local), se suben si la nube está vacía o se descargan como respaldo.
+  /* ---------- Almacenamiento por registros ----------
+     empresas/{empresa}                    -> {version, config, actualizado, autor} (+ el bloque viejo "payload" como respaldo)
+     empresas/{empresa}/{colección}/{id}   -> un documento por obra, cobro, costo, vehículo, etc.
+     "base" guarda cómo está cada registro en la nube: al guardar se suben solo los que cambiaron,
+     y al recibir cambios de otros se distingue lo propio de lo ajeno. */
+  VERSION:2,
+  base:new Map(), baseConfig:'', versionOk:false, escuchas:[], otraVez:false,
+  colRef(col){ return this.fb.collection(this.db,'empresas',this.empresaId(),col); },
+  docRef(col,id){ return this.fb.doc(this.db,'empresas',this.empresaId(),col,id); },
+  // Copia sin campos internos ni valores undefined (Firestore no los acepta)
+  limpio(o){ const r=JSON.parse(JSON.stringify(o)); delete r._autor; delete r._mod; return r; },
+
+  // Al entrar: si la empresa todavía está en el formato viejo (un solo bloque), se pasa al formato por registros.
+  // Los datos que versiones anteriores dejaban en el navegador se suben si la nube está vacía o se descargan como respaldo.
   async sincronizarAlEntrar(){
     const snap = await this.fb.getDoc(this.ref());
+    const emp = snap.exists() ? snap.data() : null;
     const previos = Store.previos;
-    if(snap.exists()){
-      if(previos) exportar('previo-al-ingreso', previos);
-      this.aplicar(snap.data().payload);
-    } else if(previos){
-      Store.data = previos;
-      await this.subir({auto:true});
-    }
+    this.base = new Map(); this.baseConfig=''; this.versionOk = !!(emp && emp.version>=this.VERSION);
+    if(!this.versionOk){
+      let datos = structuredClone(DEF);
+      if(emp && typeof emp.payload==='string' && emp.payload){
+        try{ datos = normalizar(JSON.parse(emp.payload)); }catch(e){ toast('El bloque de datos anterior está dañado; se empieza vacío', true); }
+        if(previos) exportar('previo-al-ingreso', previos);
+      } else if(previos) datos = previos;
+      Store.data = datos;
+      if(!await this.subir({auto:true, todo:true})) throw new Error('no se pudieron pasar los datos al formato nuevo');
+    } else if(previos) exportar('previo-al-ingreso', previos);
     Store.previos = null;
     [KEY, KEY+'.danado', KEY_DUENO].forEach(k=>localStorage.removeItem(k));
+    await this.escuchar();
   },
 
   // Saca los datos de la memoria (en la nube no se toca nada)
   limpiarEquipo(){
+    this.dejarDeEscuchar();
     Store.data=structuredClone(DEF);
+    this.base=new Map(); this.baseConfig='';
   },
 
   pendiente(){ return !!this.timer || this.estado==='subiendo'; },
@@ -935,39 +989,80 @@ const Cloud = {
     return true;
   },
 
-  // Aplica datos recibidos de la nube; si vienen dañados se ignoran y quedan los locales
-  aplicar(payload){
-    let datos;
-    try{ datos=normalizar(JSON.parse(payload)); }
-    catch(e){ toast('Los datos de la nube están dañados; se conservan los de este equipo', true); return false; }
-    Store.data=datos;
-    Store.save(true, datos.updatedAt);        // conserva la fecha de la nube para comparar bien la próxima vez
-    return true;
-  },
-
   // Cierra la sesión; los datos siguen en la nube y se vuelven a ver al entrar
   async salir(){
     if(this.timer){ clearTimeout(this.timer); this.timer=null; await this.subir({auto:true}); }   // no perder lo último
-    if(this.desuscribir){ this.desuscribir(); this.desuscribir=null; }
     this.limpiarEquipo();
     if(this.auth) await this.fb.signOut(this.auth);
   },
 
   ref(){ return this.fb.doc(this.db,'empresas',this.empresaId()); },
 
-  // Escucha en vivo: si otro de los usuarios guarda algo, este equipo lo recibe al instante
+  dejarDeEscuchar(){ this.escuchas.forEach(f=>{ try{ f(); }catch(e){} }); this.escuchas=[]; },
+
+  // Escucha en vivo la configuración y cada colección. La primera respuesta de cada una carga los datos;
+  // las siguientes traen solo lo que cambió (propio o de otro usuario). Resuelve cuando todo cargó.
   escuchar(){
-    if(this.desuscribir) this.desuscribir();
-    if(!this.user) return;
-    this.desuscribir = this.fb.onSnapshot(this.ref(), snap=>{
-      if(!snap.exists()) return;
-      const d=snap.data();
-      if(d.equipo===this.equipo()) return;              // es mi propia escritura
-      if((d.updatedAt||0) <= (Store.data.updatedAt||0)) return;
-      if(!this.aplicar(d.payload)) return;
-      if(!ov.classList.contains('on')) render();        // no interrumpir si está editando algo
-      toast('Actualizado por '+(d.autor||'otro usuario'));
-    }, ()=>this.setEstado('error'));
+    this.dejarDeEscuchar();
+    Store.data=structuredClone(DEF); this.base=new Map(); this.baseConfig='';
+    return new Promise((ok,mal)=>{
+      let faltan=COLS.length+1, listo=false;
+      const cargo=()=>{ if(--faltan===0){ listo=true; ok(); } };
+      const fallo=e=>{ this.setEstado('error'); if(!listo) mal(e); };
+
+      let primeraCfg=true;
+      this.escuchas.push(this.fb.onSnapshot(this.ref(), snap=>{
+        const d=snap.exists()?snap.data():{};
+        const cfg=Object.assign(structuredClone(DEF.config), esObj(d.config)?d.config:{});
+        const j=JSON.stringify(cfg);
+        const sinCambiosLocales = JSON.stringify(Store.data.config)===this.baseConfig;
+        if(j!==this.baseConfig){
+          if(primeraCfg || sinCambiosLocales){ Store.data.config=cfg; if(!primeraCfg) this.alCambiarRemoto(d.autor); }
+          this.baseConfig=j;
+        }
+        if(primeraCfg){ primeraCfg=false; cargo(); }
+      }, fallo));
+
+      COLS.forEach(col=>{
+        let primera=true;
+        this.escuchas.push(this.fb.onSnapshot(this.colRef(col), snap=>{
+          let cambios=0, autor='';
+          snap.docChanges().forEach(ch=>{
+            const id=ch.doc.id, clave=col+'/'+id;
+            const local=Store.data[col].find(x=>x.id===id);
+            // Si este equipo cambió el registro y todavía no lo subió, no se pisa: gana lo local al subir
+            const sucio = !primera && (local?JSON.stringify(this.limpio(local)):undefined)!==this.base.get(clave);
+            if(ch.type==='removed'){
+              this.base.delete(clave);
+              if(!sucio && local){ Store.data[col]=Store.data[col].filter(x=>x.id!==id); cambios++; }
+              return;
+            }
+            const d=ch.doc.data();
+            const rec=normalizarRegistro(this.limpio({...d, id}));
+            const j=JSON.stringify(rec);
+            if(this.base.get(clave)===j) return;            // eco de una escritura propia
+            this.base.set(clave,j);
+            if(sucio) return;
+            const i=Store.data[col].findIndex(x=>x.id===id);
+            if(i>-1) Store.data[col][i]=rec; else Store.data[col].push(rec);
+            cambios++; autor=d._autor||autor;
+          });
+          if(primera){ primera=false; cargo(); return; }
+          if(cambios) this.alCambiarRemoto(autor);
+        }, fallo));
+      });
+    });
+  },
+
+  // Llegaron cambios de otro usuario: se repinta la pantalla salvo que alguien esté escribiendo
+  alCambiarRemoto(autor){
+    clearTimeout(this.timerRemoto);
+    this.timerRemoto=setTimeout(()=>{
+      if(document.body.classList.contains('bloqueado')) return;
+      const escribiendo = ov.classList.contains('on') || view.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+      if(!escribiendo) render();
+      if(autor && autor!==(this.user?.email||'').split('@')[0]) toast('Actualizado por '+autor);
+    },250);
   },
 
   programarSubida(){
@@ -976,50 +1071,52 @@ const Cloud = {
     this.timer=setTimeout(()=>{ this.timer=null; this.subir({auto:true}); }, 600);
   },
 
-  async subir({auto=false}={}){
+  // Sube solo los registros nuevos o modificados y borra los que ya no están. "todo" reescribe todo.
+  async subir({auto=false, todo=false}={}){
     if(!this.user){ if(!auto) toast('Primero iniciá sesión en la nube', true); return false; }
-    const payload = JSON.stringify(Store.data);
-    const peso = new Blob([payload]).size;
-    if(peso > this.LIMITE){
-      this.setEstado('error');
-      toast('Los datos superan el límite de la nube (1 MB). Descargá un respaldo y archivá obras viejas.', true);
-      return false;
-    }
-    if(peso > this.AVISO && !this.avisado){ this.avisado=true; toast('Los datos ya ocupan '+Math.round(peso/1000)+' KB de 1000 KB en la nube', true); }
+    if(this.subiendo){ this.otraVez=true; return true; }
+    this.subiendo=true;
     try{
       this.setEstado('subiendo');
-      await this.fb.setDoc(this.ref(), {
-        payload,
-        updatedAt: Store.data.updatedAt || Date.now(),
-        empresa: Store.data.config.empresa || '',
-        equipo: this.equipo(),
-        autor: (this.user.email||'').split('@')[0],
-        miembros: this.fb.arrayUnion ? this.fb.arrayUnion(this.user.uid) : [this.user.uid]
-      }, {merge:true});
+      const ops=[], vistos=new Set();
+      COLS.forEach(col=>Store.data[col].forEach(r=>{
+        const clave=col+'/'+r.id; vistos.add(clave);
+        const j=JSON.stringify(this.limpio(r));
+        if(todo || this.base.get(clave)!==j) ops.push({col, id:r.id, j});
+      }));
+      for(const clave of this.base.keys()) if(!vistos.has(clave)){ const [col,id]=clave.split('/'); ops.push({col, id, borrar:true}); }
+      const cfgJ=JSON.stringify(Store.data.config);
+      const cfgCambio = todo || !this.versionOk || cfgJ!==this.baseConfig;
+      const autor=(this.user.email||'').split('@')[0];
+      const LOTE=400;   // Firestore acepta hasta 500 operaciones por lote
+      for(let i=0; i<Math.max(ops.length, cfgCambio?1:0); i+=LOTE){
+        const lote=this.fb.writeBatch(this.db), parte=ops.slice(i,i+LOTE);
+        parte.forEach(o=> o.borrar ? lote.delete(this.docRef(o.col,o.id))
+          : lote.set(this.docRef(o.col,o.id), {...JSON.parse(o.j), _autor:autor, _mod:Date.now()}));
+        if(i===0 && cfgCambio) lote.set(this.ref(), {version:this.VERSION, config:JSON.parse(cfgJ), empresa:Store.data.config.empresa||'',
+          actualizado:Date.now(), autor, equipo:this.equipo()}, {merge:true});
+        await lote.commit();
+        parte.forEach(o=>{ const k=o.col+'/'+o.id; if(o.borrar) this.base.delete(k); else this.base.set(k,o.j); });
+        if(i===0 && cfgCambio){ this.baseConfig=cfgJ; this.versionOk=true; }
+      }
       this.setEstado('conectado');
       if(!auto) toast('Datos guardados en la nube');
       return true;
-    }catch(e){ this.setEstado('error'); toast('No se pudo subir: '+(e.code||e.message), true); return false; }
+    }catch(e){ this.setEstado('error'); toast('No se pudo guardar en la nube: '+(e.code||e.message), true); return false; }
+    finally{
+      this.subiendo=false;
+      if(this.otraVez){ this.otraVez=false; this.programarSubida(); }   // hubo cambios mientras se subía
+    }
   },
 
+  // Vuelve a cargar todo desde la nube (descarta lo que no se haya subido)
   async bajar({auto=false}={}){
     if(!this.user){ if(!auto) toast('Primero iniciá sesión en la nube', true); return false; }
     try{
-      const snap = await this.fb.getDoc(this.ref());
-      if(!snap.exists()){
-        if(auto) return this.subir({auto:true});
-        toast('Todavía no hay datos en la nube'); return false;
-      }
-      const d=snap.data();
-      const remoto = d.updatedAt||0, local = Store.data.updatedAt||0;
-      if(auto && remoto <= local){
-        if(remoto < local) this.subir({auto:true});
-        this.setEstado('conectado');
-        return false;
-      }
-      if(!this.aplicar(d.payload)){ this.setEstado('error'); return false; }
+      clearTimeout(this.timer); this.timer=null;
+      await this.escuchar();
       this.setEstado('conectado');
-      toast(auto?'Datos actualizados desde la nube':'Datos bajados de la nube');
+      if(!auto) toast('Datos bajados de la nube');
       render();
       return true;
     }catch(e){ this.setEstado('error'); toast('No se pudo bajar: '+(e.code||e.message), true); return false; }
@@ -1140,6 +1237,7 @@ function icon(n){
     info:'<circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/>',
     buscar:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
     flecha:'<path d="M9 18l6-6-6-6"/>',
+    chat:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     doc:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6"/>',
     imprimir:'<path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v7H6z"/>'
   }[n]||'';
@@ -1177,8 +1275,8 @@ function formHTML(fields, v={}){
   }).join('')+'</div>';
 }
 
-function openForm({title, fields, values={}, onSave, wide}){
-  const m = modal({title, wide, body: formHTML(fields, values),
+function openForm({title, fields, values={}, onSave, wide, intro=''}){
+  const m = modal({title, wide, body: intro + formHTML(fields, values),
     actions:`<button class="btn" data-c>Cancelar</button><button class="btn pri" data-s>Guardar</button>`});
   m.querySelector('[data-c]').onclick = closeModal;
   m.querySelector('[data-s]').onclick = ()=>{
@@ -1573,6 +1671,7 @@ const NAV = [
   {g:'Análisis', items:[
     {k:'caja', l:'Proyección de caja', i:'caja'},
     {k:'finanzas', l:'Salud financiera', i:'panel'},
+    {k:'chat', l:'Asistente IA', i:'chat'},
     {k:'reporte', l:'Informe mensual', i:'doc'},
     {k:'informe', l:'Informe con IA', i:'ia'},
     {k:'config', l:'Ajustes y datos', i:'conf'}
@@ -1597,7 +1696,7 @@ function go(v,id,tab){ R.v=v; R.id=id||null; R.tab=tab||null; render(); window.s
 
 const TITLES = {panel:['Resumen','Panel general'],obras:['Operación','Obras'],obra:['Obras','Detalle de obra'],
   vehiculos:['Operación','Vehículos'],vehiculo:['Vehículos','Detalle de vehículo'],fijos:['Operación','Gastos fijos de estructura'],
-  finanzas:['Análisis','Salud financiera'],caja:['Análisis','Proyección de caja a 90 días'],informe:['Análisis','Informe financiero con IA'],reporte:['Análisis','Informe mensual de gestión'],
+  finanzas:['Análisis','Salud financiera'],caja:['Análisis','Proyección de caja a 90 días'],informe:['Análisis','Informe financiero con IA'],reporte:['Análisis','Informe mensual de gestión'],chat:['Análisis','Asistente IA'],
   config:['Análisis','Ajustes y datos']};
 
 /* ---------- Tema claro / oscuro (preferencia de cada equipo) ---------- */
@@ -1631,7 +1730,7 @@ function render(){
   const t=TITLES[R.v]||['',''];
   $('#crumb').textContent=t[0]; $('#title').textContent=t[1];
   $('#topActions').innerHTML='';
-  ({panel:vPanel, obras:vObras, obra:vObra, vehiculos:vVehiculos, vehiculo:vVehiculo, fijos:vFijos, finanzas:vFinanzas, caja:vCaja, informe:vInforme, reporte:vReporte, config:vConfig}[R.v]||vPanel)();
+  ({panel:vPanel, obras:vObras, obra:vObra, vehiculos:vVehiculos, vehiculo:vVehiculo, fijos:vFijos, finanzas:vFinanzas, caja:vCaja, informe:vInforme, reporte:vReporte, chat:vChat, config:vConfig}[R.v]||vPanel)();
 }
 
 /* =========================================================
@@ -1822,6 +1921,7 @@ function agrupar(arr, key){
 
 function menuCarga(){
   const m = modal({title:'¿Qué querés cargar?', body:`<div class="grid" style="gap:9px">
+    <button class="btn pri" data-go="factura" style="justify-content:flex-start;padding:12px">${icon('ia')} Una factura de proveedor, con IA (foto o PDF)</button>
     <button class="btn" data-go="ing" style="justify-content:flex-start;padding:12px">Un ingreso o cobro de una obra</button>
     <button class="btn" data-go="cos" style="justify-content:flex-start;padding:12px">Un costo o gasto de una obra</button>
     <button class="btn" data-go="carga" style="justify-content:flex-start;padding:12px">Una carga de combustible</button>
@@ -1833,6 +1933,7 @@ function menuCarga(){
     const k=b.dataset.go; closeModal();
     if(k==='ing') formIngreso(null,null);
     if(k==='cos') formCosto(null,null);
+    if(k==='factura') leerFactura(null);
     if(k==='carga') formCarga(null,null);
     if(k==='vg') formVGasto(null,null);
     if(k==='fijo') formFijo(null);
@@ -1967,7 +2068,7 @@ function vObra(){
   const body=$('#tabBody');
   if(tab==='resumen') body.innerHTML = obraResumen(o,a);
   if(tab==='ingresos'){ body.innerHTML = obraIngresos(o,a); bindTabla(body,'ingresos',x=>formIngreso(x,o.id),'ingreso'); $('#addIng')?.addEventListener('click',()=>formIngreso(null,o.id)); }
-  if(tab==='costos'){ body.innerHTML = obraCostos(o,a); bindTabla(body,'costos',x=>formCosto(x,o.id),'costo'); $('#addCos')?.addEventListener('click',()=>formCosto(null,o.id)); }
+  if(tab==='costos'){ body.innerHTML = obraCostos(o,a); bindTabla(body,'costos',x=>formCosto(x,o.id),'costo'); $('#addCos')?.addEventListener('click',()=>formCosto(null,o.id)); $('#addFact')?.addEventListener('click',()=>leerFactura(o.id)); }
   if(tab==='plan'){
     body.innerHTML = obraPlan(o,a);
     body.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>formPlan(Store.get('planes',b.dataset.edit),o.id));
@@ -2111,7 +2212,7 @@ function obraIngresos(o,a){
 function obraCostos(o,a){
   const rows = a.cos.map(x=>({...x,__id:x.id})).sort((x,y)=>x.fecha<y.fecha?-1:1);
   return `<div class="card" style="margin-bottom:16px"><div class="card-h"><h2>Costos de la obra</h2><span class="sub">${money(a.costoTot)} · ${money(a.porPagar)} sin pagar</span>
-    <button class="btn pri sm push" id="addCos">${icon('add')} Cargar costo</button></div>
+    <button class="btn sm push" id="addFact">${icon('ia')} Desde factura</button><button class="btn pri sm" id="addCos">${icon('add')} Cargar costo</button></div>
     ${table([
       {h:'Fecha', v:r=>fdate(r.fecha)},
       {h:'Categoría', v:r=>`<span class="chip">${esc(r.categoria||'—')}</span>`},
@@ -2201,8 +2302,9 @@ function formIngreso(x,obraId){
     onSave:v=>{ if(x){Store.upd('ingresos',x.id,v);toast('Ingreso actualizado');} else {Store.add('ingresos',v);toast('Ingreso cargado');} render(); }});
 }
 
-function formCosto(x,obraId){
-  openForm({title:x?'Editar costo':'Nuevo costo', values:x||{fecha:today(),categoria:'Materiales',obraId:obraId||'',pagado:true,fechaPago:today()},
+function formCosto(x,obraId,inicial=null,intro=''){
+  openForm({title:x?'Editar costo':inicial?'Revisá la factura antes de guardar':'Nuevo costo', intro,
+    values:x||inicial||{fecha:today(),categoria:'Materiales',obraId:obraId||'',pagado:true,fechaPago:today()},
     fields:[
       {k:'obraId', l:'Obra', t:'select', opts:obraOpts(), full:1},
       {k:'fecha', l:'Fecha del gasto / factura', t:'date', req:1},
@@ -2210,11 +2312,87 @@ function formCosto(x,obraId){
       {k:'monto', l:'Monto', t:'number', req:1},
       {k:'proveedor', l:'Proveedor'},
       {k:'concepto', l:'Concepto', full:1, ph:'Ej: 40 bolsas de cemento'},
+      {k:'comprobante', l:'Comprobante', ph:'Ej: Factura A 0003-00012345'},
       {k:'pagado', l:'¿Ya se pagó?', t:'check', chkLabel:'Sí, está pagado'},
       {k:'fechaPago', l:'Fecha de pago', t:'date', hint:'Define el plazo de pago a proveedores'},
       {k:'vence', l:'Vence el', t:'date', hint:'Si todavía no lo pagaste, entra a la proyección de caja en esta fecha'}
     ],
     onSave:v=>{ if(!v.pagado) v.fechaPago=''; if(x){Store.upd('costos',x.id,v);toast('Costo actualizado');} else {Store.add('costos',v);toast('Costo cargado');} render(); }});
+}
+
+/* ---------- Cargar una factura con IA ----------
+   La foto se achica en el navegador antes de mandarla (sube rápido y entra en el límite del servidor).
+   Claude devuelve los datos y se abre el formulario de costo completo para revisarlo. */
+const MAX_PDF = 3*1024*1024;
+function archivoABase64(file){
+  return new Promise((ok,mal)=>{ const r=new FileReader(); r.onload=()=>ok(String(r.result).split(',')[1]); r.onerror=()=>mal(new Error('No se pudo leer el archivo')); r.readAsDataURL(file); });
+}
+async function prepararArchivo(file){
+  if(file.type==='application/pdf'){
+    if(file.size>MAX_PDF) throw new Error('El PDF pesa más de 3 MB. Probá con una foto de la factura.');
+    return {tipo:'application/pdf', archivo: await archivoABase64(file)};
+  }
+  if(!file.type.startsWith('image/')) throw new Error('Formato no soportado. Usá una foto (JPG o PNG) o un PDF.');
+  const url=URL.createObjectURL(file);
+  try{
+    const img=await new Promise((ok,mal)=>{ const i=new Image(); i.onload=()=>ok(i); i.onerror=()=>mal(new Error('No se pudo abrir la imagen')); i.src=url; });
+    const lado=2000, k=Math.min(1, lado/Math.max(img.width,img.height));
+    const cv=document.createElement('canvas'); cv.width=Math.round(img.width*k); cv.height=Math.round(img.height*k);
+    const cx=cv.getContext('2d'); cx.fillStyle='#fff'; cx.fillRect(0,0,cv.width,cv.height); cx.drawImage(img,0,0,cv.width,cv.height);
+    return {tipo:'image/jpeg', archivo: cv.toDataURL('image/jpeg',0.86).split(',')[1]};
+  } finally { URL.revokeObjectURL(url); }
+}
+
+function leerFactura(obraId){
+  const m = modal({title:'Cargar una factura con IA', body:`
+    <p style="font-size:13.5px;color:var(--muted);margin-bottom:14px">Sacá una foto de la factura o subí el PDF. Claude completa proveedor, fecha, monto, categoría y obra, y después revisás todo antes de guardar.</p>
+    <label class="zona-archivo" id="zonaFact">
+      <input type="file" id="archFact" accept="image/*,application/pdf" hidden>
+      ${icon('up')}<b>Elegí una foto o un PDF</b><span>En el celular podés sacar la foto en el momento</span>
+    </label>
+    <div id="estFact"></div>`, actions:`<button class="btn" data-c>Cancelar</button>`});
+  m.querySelector('[data-c]').onclick=closeModal;
+  const inp=m.querySelector('#archFact'), zona=m.querySelector('#zonaFact'), est=m.querySelector('#estFact');
+  const procesar=async file=>{
+    if(!file) return;
+    zona.style.display='none';
+    est.innerHTML=`<div class="leyendo"><span class="girando"></span><div><b>Leyendo la factura…</b><div class="mini">Tarda entre 10 y 40 segundos.</div></div></div>`;
+    try{
+      const {tipo,archivo}=await prepararArchivo(file);
+      const token=await Cloud.user.getIdToken();
+      const r=await fetch('/api/extraer-factura',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+        body:JSON.stringify({tipo, archivo, obras:D().obras.filter(o=>o.estado!=='Cancelada').map(o=>({id:o.id,nombre:o.nombre,cliente:o.cliente||''}))})});
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(j.error || (r.status===404?'El lector de facturas no está disponible: el sitio tiene que estar publicado en Vercel.':'Error del servidor ('+r.status+').'));
+      if(!ov.classList.contains('on')) return;           // se cerró mientras leía
+      abrirCostoDeFactura(j.factura, obraId);
+    }catch(e){
+      est.innerHTML=`<div class="big-note bad" style="margin-top:4px">${esc(e.message||'No se pudo leer la factura.')}</div>`;
+      zona.style.display='';
+    }
+  };
+  inp.onchange=()=>procesar(inp.files[0]);
+  zona.addEventListener('dragover',e=>{ e.preventDefault(); zona.classList.add('encima'); });
+  zona.addEventListener('dragleave',()=>zona.classList.remove('encima'));
+  zona.addEventListener('drop',e=>{ e.preventDefault(); zona.classList.remove('encima'); procesar(e.dataTransfer.files[0]); });
+}
+
+function abrirCostoDeFactura(f, obraId){
+  const fecha = /^\d{4}-\d{2}-\d{2}$/.test(f.fecha||'') ? f.fecha : today();
+  const vence = /^\d{4}-\d{2}-\d{2}$/.test(f.vencimiento||'') ? f.vencimiento : '';
+  const comprobante = [f.tipo_comprobante, f.numero].filter(Boolean).join(' ');
+  const obra = (obraId && Store.get('obras',obraId)) ? obraId : (Store.get('obras',f.obra_id) ? f.obra_id : '');
+  const valores = {fecha, vence, categoria: CAT_COSTO.includes(f.categoria)?f.categoria:'Otros', monto: num(f.total),
+    proveedor: [f.proveedor, f.cuit?`CUIT ${f.cuit}`:''].filter(Boolean).join(' · '), concepto: f.concepto||'', comprobante,
+    obraId: obra, pagado:false, fechaPago:''};
+  // Aviso si ese comprobante ya está cargado
+  const repetido = comprobante && f.numero && D().costos.find(c=>(c.comprobante||'').includes(f.numero) && (c.proveedor||'').toLowerCase().includes((f.proveedor||'').toLowerCase().slice(0,12)));
+  const nivel = {alta:['ok','Lectura clara'], media:['warn','Revisá los datos marcados como dudosos'], baja:['bad','Lectura dudosa: revisá todo con la factura en la mano']}[f.confianza]||['warn','Revisá los datos'];
+  const detalle = [f.neto&&f.iva?`Neto ${money(f.neto,true)} + IVA ${money(f.iva,true)} = ${money(f.total,true)}`:'', f.moneda&&f.moneda!=='ARS'?`Moneda del comprobante: ${f.moneda}`:'', f.observaciones||''].filter(Boolean);
+  const intro = `${f.es_comprobante===false?`<div class="big-note bad" style="margin-bottom:12px"><b>Esto no parece una factura.</b> Revisá el archivo antes de guardar.</div>`:''}
+    ${repetido?`<div class="big-note bad" style="margin-bottom:12px"><b>Ojo: este comprobante parece estar cargado.</b> ${esc(repetido.concepto||'')} · ${money(repetido.monto)} · ${fdate(repetido.fecha)}</div>`:''}
+    <div class="big-note ${nivel[0]}" style="margin-bottom:16px"><b>${esc(nivel[1])}.</b>${detalle.map(d=>' '+esc(d)).join('.')}${obra?'':' Elegí la obra a la que corresponde.'}</div>`;
+  formCosto(null, obra, valores, intro);
 }
 
 /* =========================================================
@@ -2895,6 +3073,128 @@ function contarSegundos(){
 }
 
 /* =========================================================
+   Asistente IA: preguntas en lenguaje natural sobre los datos
+   La conversación vive solo en memoria (no se guarda). Los datos se arman una vez
+   por conversación y se mandan iguales en cada pregunta, para aprovechar la caché.
+   ========================================================= */
+const CHAT = {mensajes:[], datos:null, desde:null, escribiendo:false};
+
+// Detalle de movimientos de los últimos 36 meses, compacto, para que Claude pueda sumar y filtrar
+function datosChat(){
+  const limite = ultimosMeses(36)[0];
+  const reciente = f => !f || monthKey(f) >= limite;
+  const obra = id => Store.get('obras',id)?.nombre || '';
+  const veh = id => Store.get('vehiculos',id)?.nombre || '';
+  return JSON.stringify({
+    resumen: datosParaIA(null),
+    movimientos: {
+      ingresos: D().ingresos.filter(x=>reciente(x.fecha)).map(x=>sinVacios({fecha:x.fecha, obra:obra(x.obraId), tipo:x.tipo, monto:r0(num(x.monto)), medio:x.medio, concepto:x.concepto})),
+      costos: D().costos.filter(x=>reciente(x.fecha)).map(x=>sinVacios({fecha:x.fecha, obra:obra(x.obraId), categoria:x.categoria, proveedor:x.proveedor, concepto:x.concepto,
+        monto:r0(num(x.monto)), pagado:!!x.pagado, fecha_pago:x.fechaPago, vence:x.vence, comprobante:x.comprobante})),
+      gastos_fijos: D().fijos.map(x=>sinVacios({concepto:x.concepto, categoria:x.categoria, monto:r0(num(x.monto)), periodicidad:x.periodicidad, mensual:r0(fijoMensual(x)), activo:x.activo!==false})),
+      vehiculos_gastos: D().vgastos.filter(x=>reciente(x.fecha)).map(x=>sinVacios({fecha:x.fecha, vehiculo:veh(x.vehiculoId), tipo:x.tipo, monto:r0(num(x.monto)), detalle:x.detalle})),
+      combustible: D().cargas.filter(x=>reciente(x.fecha)).map(x=>sinVacios({fecha:x.fecha, vehiculo:veh(x.vehiculoId), litros:num(x.litros), importe:r0(num(x.importe)), odometro:num(x.odometro)||null})),
+      previstos: D().previsiones.map(x=>sinVacios({fecha:x.fecha, tipo:x.tipo, concepto:x.concepto, monto:r0(num(x.monto)), obra:obra(x.obraId)}))
+    }
+  });
+}
+
+// Markdown simple y seguro: todo se escapa primero; solo se reconocen negritas, cursivas, listas, títulos y tablas
+function mdSeguro(texto){
+  const enLinea = t => esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/(^|[\s(])_(.+?)_(?=[\s).,;:!?]|$)/g,'$1<i>$2</i>');
+  const lineas = String(texto).split('\n'); let html='', i=0;
+  while(i<lineas.length){
+    const l=lineas[i];
+    if(/^\s*\|.*\|\s*$/.test(l)){
+      const filas=[]; while(i<lineas.length && /^\s*\|.*\|\s*$/.test(lineas[i])){ filas.push(lineas[i]); i++; }
+      const celdas = f => f.trim().replace(/^\||\|$/g,'').split('|').map(c=>c.trim());
+      const cuerpo = filas.filter(f=>!/^\s*\|[\s:|-]+\|\s*$/.test(f));
+      const [cab,...resto]=cuerpo;
+      html+=`<div class="tbl-wrap"><table><thead><tr>${celdas(cab||'').map(c=>`<th>${enLinea(c)}</th>`).join('')}</tr></thead><tbody>${resto.map(f=>`<tr>${celdas(f).map(c=>`<td>${enLinea(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+      continue;
+    }
+    if(/^\s*([-*•]|\d+[.)])\s+/.test(l)){
+      const orden=/^\s*\d/.test(l), items=[];
+      while(i<lineas.length && /^\s*([-*•]|\d+[.)])\s+/.test(lineas[i])){ items.push(lineas[i].replace(/^\s*([-*•]|\d+[.)])\s+/,'')); i++; }
+      html+=`<${orden?'ol':'ul'}>${items.map(x=>`<li>${enLinea(x)}</li>`).join('')}</${orden?'ol':'ul'}>`;
+      continue;
+    }
+    const h=l.match(/^\s*#{1,4}\s+(.*)$/);
+    if(h){ html+=`<h4>${enLinea(h[1])}</h4>`; i++; continue; }
+    if(l.trim()) html+=`<p>${enLinea(l)}</p>`;
+    i++;
+  }
+  return html;
+}
+
+const SUGERENCIAS = ['¿Qué cliente me paga más tarde?', '¿Cuánto gastamos en fletes este año?', '¿Qué obra fue la más rentable y por qué?',
+  '¿Llegamos a pagar la estructura del mes que viene?', 'Compará este mes con el anterior', '¿Qué proveedores nos deben más pagos pendientes?'];
+
+function vChat(){
+  $('#topActions').innerHTML = CHAT.mensajes.length ? `<button class="btn" id="chatNuevo">${icon('add')} Nueva conversación</button>` : '';
+  view.innerHTML = `<div class="chat">
+    <div class="chat-msgs" id="chatMsgs">${CHAT.mensajes.length ? CHAT.mensajes.map(pintarMensaje).join('') : `
+      <div class="chat-vacio">
+        <div class="chat-ico">${icon('ia')}</div>
+        <h2>Preguntale a tus números</h2>
+        <p>Claude tiene a mano las obras, los cobros, los costos, los gastos fijos, los vehículos y los indicadores. Preguntá como le preguntarías a tu contador.</p>
+        <div class="chat-sug">${SUGERENCIAS.map(s=>`<button class="btn" data-sug="${esc(s)}">${esc(s)}</button>`).join('')}</div>
+      </div>`}</div>
+    <form class="chat-entrada" id="chatForm">
+      <textarea id="chatTxt" rows="1" placeholder="Escribí tu pregunta…" ${CHAT.escribiendo?'disabled':''}></textarea>
+      <button class="btn pri" type="submit" id="chatEnviar" ${CHAT.escribiendo?'disabled':''} aria-label="Enviar">${icon('flecha')}</button>
+    </form>
+    <p class="mini chat-nota">${CHAT.desde?`Datos al ${esc(CHAT.desde)} · para incluir cambios posteriores, empezá una nueva conversación · `:''}La conversación no se guarda. Revisá las cifras importantes antes de decidir.</p>
+  </div>`;
+  const msgs=$('#chatMsgs'); msgs.scrollTop=msgs.scrollHeight;
+  $('#chatNuevo')?.addEventListener('click',()=>{ if(CHAT.escribiendo) return; CHAT.mensajes=[]; CHAT.datos=null; CHAT.desde=null; render(); });
+  view.querySelectorAll('[data-sug]').forEach(b=>b.onclick=()=>enviarPregunta(b.dataset.sug));
+  const txt=$('#chatTxt');
+  txt.addEventListener('input',()=>{ txt.style.height='auto'; txt.style.height=Math.min(txt.scrollHeight,160)+'px'; });
+  txt.addEventListener('keydown',e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); $('#chatForm').requestSubmit(); } });
+  $('#chatForm').onsubmit=e=>{ e.preventDefault(); const t=txt.value.trim(); if(t) enviarPregunta(t); };
+  if(!CHAT.escribiendo) txt.focus();
+}
+function pintarMensaje(m){
+  if(m.role==='user') return `<div class="msg yo"><div class="burbuja">${esc(m.content)}</div></div>`;
+  return `<div class="msg ia"><div class="av-ia">${icon('ia')}</div><div class="burbuja md">${m.content?mdSeguro(m.content):'<span class="pensando"><i></i><i></i><i></i></span>'}</div></div>`;
+}
+
+async function enviarPregunta(texto){
+  if(CHAT.escribiendo) return;
+  if(!CHAT.datos){ CHAT.datos=datosChat(); CHAT.desde=new Date().toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+  CHAT.mensajes.push({role:'user', content:texto});
+  const resp={role:'assistant', content:''}; CHAT.mensajes.push(resp);
+  CHAT.escribiendo=true;
+  if(R.v==='chat') render();
+  // Repinta solo la última burbuja mientras llega el texto
+  const pintar=()=>{ if(R.v!=='chat') return; const b=view.querySelector('.msg.ia:last-child .burbuja'); if(b){ b.innerHTML=resp.content?mdSeguro(resp.content):'<span class="pensando"><i></i><i></i><i></i></span>'; const c=$('#chatMsgs'); c.scrollTop=c.scrollHeight; } };
+  try{
+    const token=await Cloud.user.getIdToken();
+    const historial=CHAT.mensajes.slice(0,-1).map(m=>({role:m.role, content:m.content}));
+    const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+      body:JSON.stringify({datos:CHAT.datos, mensajes:historial})});
+    if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(j.error || (r.status===404?'El asistente no está disponible: el sitio tiene que estar publicado en Vercel.':'Error del servidor ('+r.status+').')); }
+    const lector=r.body.getReader(), dec=new TextDecoder();
+    let ultimo=0;
+    for(;;){
+      const {done,value}=await lector.read(); if(done) break;
+      resp.content+=dec.decode(value,{stream:true});
+      if(Date.now()-ultimo>60){ ultimo=Date.now(); pintar(); }
+    }
+    resp.content+=dec.decode();
+    if(!resp.content.trim()) resp.content='_No llegó respuesta. Probá de nuevo._';
+  }catch(e){
+    // Si falló, se saca la pregunta para que se pueda reintentar sin romper el orden de la conversación
+    CHAT.mensajes.splice(-2,2);
+    toast(e.message||'No se pudo consultar al asistente', true);
+  }finally{
+    CHAT.escribiendo=false;
+    if(R.v==='chat') render();
+  }
+}
+
+/* =========================================================
    Informe mensual de gestión (para imprimir o guardar en PDF)
    ========================================================= */
 let mesReporte = null;   // mes elegido (AAAA-MM); por defecto, el último con movimientos
@@ -3103,7 +3403,7 @@ function vConfig(){
   $('#demoDel')?.addEventListener('click', ()=>confirmDel('Se borrarán solo las obras, movimientos, vehículos y gastos de ejemplo, para todos los usuarios. Los datos reales quedan como están.',borrarDemo,
     {titulo:'Borrar datos de ejemplo', boton:'Borrar ejemplo', nota:''}));
 
-  $('#fbSubir').onclick=()=>Cloud.subir({});
+  $('#fbSubir').onclick=()=>Cloud.subir({todo:true});
   $('#fbBajar').onclick=()=>Cloud.bajar({});
   $('#fbSalir').onclick=()=>Cloud.salir();
 }
