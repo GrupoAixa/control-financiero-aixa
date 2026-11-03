@@ -56,6 +56,7 @@ Marco de análisis (contabilidad gerencial):
 - Lectura financiera: plazo de cobro vs plazo de pago. Si se cobra más tarde de lo que se paga, la empresa financia el ciclo con capital propio; si es al revés, la financian clientes (adelantos) y proveedores. Es más fácil acortar el plazo de cobro (adelantos, certificaciones más frecuentes) que estirar el de pago.
 - Rentabilidad vs costo de oportunidad: compará TIR y rentabilidad con la tasa exigida. Si hay inflación informada, compará rentabilidad con inflación (rentabilidad ÷ inflación: más de 3 muy bueno, 2 bueno, 1 regular, menos de 1 malo).
 - Los montos están en pesos nominales: con inflación, comparar montos de meses lejanos distorsiona; preferí porcentajes y tendencias.
+- Si una obra trae "real", son sus resultados en pesos constantes del mes "pesos_de", deflactados con el IPC oficial del INDEC: priorizalos para juzgar la rentabilidad (un ROI nominal positivo con ROI real negativo es una obra que perdió plata). Si trae "desvio_costos_sin_inflacion_icc", separa el desvío de costos en suba de precios de la construcción (ICC del INDEC, no depende de la empresa) y desvío propio (compras, desperdicio, imprevistos o presupuesto corto): usá el desvío propio para opinar sobre el control de costos.
 - No hay balance (activos, pasivos, patrimonio neto, deudas financieras ni stock): no inventes indicadores que los requieran (RPN, ROA, endeudamiento, liquidez corriente). Si hacen falta para una conclusión, mencionalo en "datos_faltantes".
 
 Reglas:

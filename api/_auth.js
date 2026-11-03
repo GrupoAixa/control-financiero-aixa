@@ -8,12 +8,13 @@ const EMAILS_AUTORIZADOS = (process.env.EMAILS_AUTORIZADOS || "").split(",").map
 export function httpError(status, message) { const e = new Error(message); e.status = status; return e; }
 
 // Valida el token de sesión de Firebase con la API de Identity Toolkit (no hace falta cuenta de servicio)
-// y que el email esté en EMAILS_AUTORIZADOS. Devuelve el usuario de Firebase.
-export async function verificarSesion(req) {
+// y que el email esté en EMAILS_AUTORIZADOS (salvo soloSesion: datos públicos que no usan la IA).
+// Devuelve el usuario de Firebase.
+export async function verificarSesion(req, { soloSesion = false } = {}) {
   const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!token) throw httpError(401, "Falta iniciar sesión.");
   if (!FIREBASE_API_KEY) throw httpError(500, "Falta configurar FIREBASE_API_KEY en Vercel.");
-  if (!EMAILS_AUTORIZADOS.length) throw httpError(500, "Falta configurar EMAILS_AUTORIZADOS en Vercel.");
+  if (!soloSesion && !EMAILS_AUTORIZADOS.length) throw httpError(500, "Falta configurar EMAILS_AUTORIZADOS en Vercel.");
   const r = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(FIREBASE_API_KEY)}`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken: token }),
   });
@@ -21,7 +22,7 @@ export async function verificarSesion(req) {
   const u = d.users?.[0];
   if (!r.ok || !u?.email) throw httpError(401, "Sesión inválida o vencida. Volvé a iniciar sesión.");
   if (u.disabled) throw httpError(403, "Tu cuenta está deshabilitada.");
-  if (!EMAILS_AUTORIZADOS.includes(u.email.toLowerCase())) throw httpError(403, "Tu cuenta no tiene permiso para usar la IA.");
+  if (!soloSesion && !EMAILS_AUTORIZADOS.includes(u.email.toLowerCase())) throw httpError(403, "Tu cuenta no tiene permiso para usar la IA.");
   return u;
 }
 

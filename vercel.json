@@ -4,6 +4,7 @@
   "functions": {
     "api/informe-financiero.js": { "maxDuration": 300 },
     "api/extraer-factura.js": { "maxDuration": 120 },
-    "api/chat.js": { "maxDuration": 300 }
+    "api/chat.js": { "maxDuration": 300 },
+    "api/indices.js": { "maxDuration": 60 }
   }
 }

@@ -4,6 +4,7 @@ Partes del sistema:
 
 - `docs/index.html`: la app completa (un solo archivo, no hay que compilar nada).
 - `api/`: funciones de servidor que usan la IA (Claude): `informe-financiero.js` (informe), `extraer-factura.js` (lee facturas) y `chat.js` (asistente). Son las únicas que conocen la clave de Anthropic; `_auth.js` verifica la sesión y el mail antes de cada uso.
+- `api/indices.js`: trae del INDEC el IPC y el índice del costo de la construcción (ICC) para ver las obras en términos reales. Es la única que conoce el token del INDEC.
 - **Firebase**: inicios de sesión y datos (plan gratuito).
 - **Vercel**: publica la app y la función de servidor (igual que maderogest).
 
@@ -19,6 +20,7 @@ En el celular, abrí la dirección del sitio y usá "Agregar a pantalla de inici
    - `ANTHROPIC_API_KEY`: la clave de <https://console.anthropic.com> (**Settings → API Keys**). Nunca la pongas en el código.
    - `FIREBASE_API_KEY`: la misma `apiKey` del proyecto de Firebase.
    - `EMAILS_AUTORIZADOS`: los mails que pueden usar la IA (informes, facturas y asistente), separados por coma (los mismos de las reglas de Firestore).
+   - `INDEC_TOKEN`: el token de la API del INDEC (ver "Índices del INDEC" más abajo). Sin él la app funciona igual, pero no muestra los números en términos reales.
 4. **Deploy**. Vercel te da una dirección del tipo `control-financiero-aixa.vercel.app`.
 5. En Firebase, **Authentication → Settings → Dominios autorizados**, agregá esa dirección de Vercel.
 
@@ -140,3 +142,21 @@ Como cargás todo en pesos nominales, tené presente que comparar una obra de ha
 ### Sobre la tasa de descuento
 
 En **Ajustes** cargás la tasa anual que le exigís a tu plata. Es la referencia del VAN y contra la que se compara la TIR. En un contexto inflacionario, si cargás pesos nominales, usá una tasa que incluya la inflación esperada (por ejemplo el rendimiento de un plazo fijo o el costo de tu descubierto). La alternativa más limpia es cargar todos los montos en dólares y usar una tasa real del 8–15 %.
+
+---
+
+## Índices del INDEC (términos reales)
+
+La app usa dos índices oficiales del [Catálogo API-INDEC](https://api.indec.gob.ar):
+
+- **IPC** (inflación): pasa cada cobro y cada pago de una obra a pesos de un mismo mes. Con eso, en el **Resumen** de cada obra se ven el margen, el ROI y la TIR **en términos reales**.
+- **ICC** (costo de la construcción, Gran Buenos Aires): en **Presupuesto vs real** separa cuánto del desvío fue suba de precios del sector y cuánto es desvío propio. Materiales y mano de obra usan su propio capítulo del ICC; el resto de los rubros, el nivel general. El presupuesto se toma a precios del mes de la **Fecha del presupuesto** de la obra (o de la aceptación si está vacía).
+
+Para activarlo:
+
+1. Registrate en <https://api.indec.gob.ar> (mail, nombre y organización) y verificá el mail con el código que te llega.
+2. En tu perfil, generá el **JWT Token**. Se muestra una sola vez: copialo.
+3. En Vercel, **Settings → Environment Variables**, cargalo como `INDEC_TOKEN` y hacé **Redeploy**.
+4. En la app, **Ajustes → Índices oficiales (INDEC)** tiene que decir "Conectado", con el último mes publicado. Ahí también se elige la región del IPC.
+
+Los índices se actualizan solos (el INDEC los publica una vez por mes, a mediados de mes, con el dato del mes anterior). Los movimientos de meses todavía no publicados se toman con el último índice disponible y la app lo avisa. Si el token vence o se revoca, generá uno nuevo en el perfil del INDEC y reemplazalo en Vercel.

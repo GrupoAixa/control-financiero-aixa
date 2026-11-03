@@ -499,7 +499,7 @@ body.bloqueado .login::after{content:"Control financiero AIXA · acceso solo par
 
 const KEY = 'obracontrol.v1';
 const DEF = {
-  config:{empresa:'Mi empresa', moneda:'ARS', tasa:60, margenObj:25, ivaOn:false, saldoInicial:0, diaPagoFijos:10},
+  config:{empresa:'Mi empresa', moneda:'ARS', tasa:60, margenObj:25, ivaOn:false, saldoInicial:0, diaPagoFijos:10, regionIpc:'Nacional'},
   updatedAt:0,
   obras:[], ingresos:[], costos:[],
   vehiculos:[], cargas:[], vgastos:[],
@@ -733,6 +733,124 @@ function compararRubros(o){
   }).sort((a,b)=>b.real-a.real);
   const totPre=filas.reduce((s,f)=>s+f.pre,0), totReal=filas.reduce((s,f)=>s+f.real,0);
   return {filas, totPre, totReal, desv: totReal-totPre, desvPct: totPre>0?(totReal-totPre)/totPre*100:null};
+}
+
+/* ---------- Términos reales (índices oficiales del INDEC) ----------
+   Los índices los trae /api/indices (Vercel), que es quien tiene el token del INDEC.
+   Son datos públicos: se guarda una copia en este equipo para no pedirlos en cada pantalla. */
+const Indices = {
+  KEY:'obracontrol.indices', VIGENCIA:12*3600*1000,
+  datos:null, t:0, error:'', pedido:null,
+  leerCopia(){
+    try{ const c=JSON.parse(localStorage.getItem(this.KEY)||'null'); if(esObj(c)&&esObj(c.datos)){ this.datos=c.datos; this.t=num(c.t); } }catch(e){}
+  },
+  actualizar(forzar=false){
+    if(!this.datos) this.leerCopia();
+    if(!forzar && this.datos && Date.now()-this.t<this.VIGENCIA) return Promise.resolve();
+    if(this.pedido || !Cloud.user) return this.pedido||Promise.resolve();
+    this.pedido=(async()=>{
+      try{
+        const token=await Cloud.user.getIdToken();
+        const r=await fetch('/api/indices'+(forzar?'?forzar=1':''), {headers:{Authorization:'Bearer '+token}});
+        const j=await r.json().catch(()=>({}));
+        if(!r.ok) throw new Error(j.error || (r.status===404
+          ? 'El servicio de índices no está disponible: el sitio tiene que estar publicado en Vercel.'
+          : 'Error del servidor ('+r.status+').'));
+        this.datos=j; this.t=Date.now(); this.error='';
+        try{ localStorage.setItem(this.KEY, JSON.stringify({t:this.t, datos:j})); }catch(e){}
+        if(forzar) toast('Índices del INDEC actualizados');
+      }catch(e){
+        this.error=e.message||'No se pudieron leer los índices del INDEC';
+        if(forzar) toast(this.error, true);
+      }finally{ this.pedido=null; Cloud.alCambiarRemoto(); }
+    })();
+    return this.pedido;
+  },
+  regiones(){ const r=this.datos?.ipc?.regiones; return esObj(r) ? Object.keys(r).filter(k=>esObj(r[k])&&Object.keys(r[k]).length) : []; },
+  // Serie del IPC de la región elegida en Ajustes (si no está, la nacional)
+  ipc(){
+    const r=this.datos?.ipc?.regiones, regs=this.regiones(); if(!regs.length) return null;
+    const n=s=>String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+    const quiero=n(D().config.regionIpc||'Nacional');
+    const k=regs.find(x=>n(x)===quiero) || regs.find(x=>n(x).includes('nacional')) || regs[0];
+    return {region:k, s:serieIdx(r[k])};
+  },
+  icc(clave){ const s=this.datos?.icc?.[clave]; return esObj(s)&&Object.keys(s).length ? serieIdx(s) : null; }
+};
+
+// Índice mensual {AAAA-MM: valor} con búsqueda: antes del primer dato no hay valor; un mes sin publicar
+// (el INDEC publica con un mes de atraso) toma el último publicado y queda marcado como provisorio.
+const SERIES = new WeakMap();
+function serieIdx(obj){
+  if(SERIES.has(obj)) return SERIES.get(obj);
+  const ks=Object.keys(obj).filter(k=>/^\d{4}-\d{2}$/.test(k)&&isFinite(obj[k])&&obj[k]>0).sort();
+  const S={primero:ks[0]||null, ultimo:ks[ks.length-1]||null,
+    get(mk){
+      if(!mk||!ks.length||mk<ks[0]) return null;
+      if(obj[mk]>0) return obj[mk];
+      let lo=0, hi=ks.length-1;   // el mes publicado más cercano hacia atrás
+      while(lo<hi){ const mid=(lo+hi+1)>>1; if(ks[mid]<=mk) lo=mid; else hi=mid-1; }
+      return obj[ks[lo]];
+    }};
+  SERIES.set(obj,S);
+  return S;
+}
+
+// Margen de la obra en pesos constantes: cada cobro y cada pago se lleva al último mes con IPC publicado
+// usando el IPC de su fecha. Así no se suman pesos de meses distintos como si valieran lo mismo.
+function obraReal(o,a){
+  const ipc=Indices.ipc(); if(!ipc || !a.flows.length) return null;
+  const S=ipc.s, base=S.ultimo, vBase=S.get(base);
+  let ingR=0, cosR=0, ingN=0, cosN=0, sinDato=0, provisorio=false;
+  const flowsR=[];
+  a.flows.forEach(f=>{
+    const mk=monthKey(f.d), v=S.get(mk);
+    if(v==null){ sinDato++; return; }
+    if(mk>base) provisorio=true;
+    const m=f.m*vBase/v;
+    flowsR.push({d:f.d, m});
+    if(f.m>0){ ingR+=m; ingN+=f.m; } else { cosR-=m; cosN-=f.m; }
+  });
+  if(!flowsR.length) return null;
+  const margenR=ingR-cosR, margenN=ingN-cosN;
+  const roiR = cosR>0 ? margenR/cosR*100 : null, roiN = cosN>0 ? margenN/cosN*100 : null;
+  const mIni=monthKey(a.flows[0].d), mFin=monthKey(a.flows[a.flows.length-1].d);
+  const vIni=S.get(mIni), vFin=S.get(mFin);
+  const tirR=xirr(flowsR);
+  return {base, region:ipc.region, ingR, cosR, margenR, rentR: ingR>0?margenR/ingR*100:null, roiR, roiN,
+    perdida: roiR!=null&&roiN!=null ? roiN-roiR : null,
+    inflacion: vIni&&vFin ? (vFin/vIni-1)*100 : null, mIni, mFin, tirR, sinDato, provisorio,
+    metaCumplida: a.metaRoi>0&&roiR!=null ? roiR>=a.metaRoi : null};
+}
+
+// Presupuesto vs real descontando la suba de precios de la construcción (ICC del INDEC):
+// cada costo se lleva al mes del presupuesto con el índice de su rubro. Lo que queda de desvío
+// ya no es inflación del sector: es compra cara, desperdicio, imprevistos o mal presupuesto.
+const ICC_RUBRO = {'Materiales':'materiales', 'Mano de obra':'mano_obra'};   // el resto, con el nivel general
+const ICC_NOMBRE = {general:'ICC nivel general', materiales:'ICC materiales', mano_obra:'ICC mano de obra'};
+function compararRubrosICC(o, c=compararRubros(o)){
+  const base=monthKey(o.fechaPresupuesto||o.fechaAceptacion);
+  const gral=Indices.icc('general');
+  if(!base || !gral || gral.get(base)==null) return null;
+  const cos=costosDe(o.id);
+  let provisorio=false;
+  const filas=c.filas.map(f=>{
+    const clave = ICC_RUBRO[f.rubro] && Indices.icc(ICC_RUBRO[f.rubro])?.get(base)!=null ? ICC_RUBRO[f.rubro] : 'general';
+    const S=Indices.icc(clave), vb=S.get(base);
+    const realBase=cos.filter(x=>(x.categoria||'Sin categoría')===f.rubro).reduce((s,x)=>{
+      const mk=monthKey(x.fecha)||base; if(mk>S.ultimo) provisorio=true;
+      return s+num(x.monto)*vb/(S.get(mk)||vb); },0);
+    const propio=realBase-f.pre;
+    return {...f, clave, realBase, efecto:f.real-realBase, propio: f.pre>0?propio:null, propioPct: f.pre>0?propio/f.pre*100:null,
+      suba:(S.get(S.ultimo)/vb-1)*100};
+  });
+  const conPre=filas.filter(f=>f.pre>0);
+  const totRealBase=filas.reduce((s,f)=>s+f.realBase,0), totEfecto=filas.reduce((s,f)=>s+f.efecto,0);
+  // Para el desvío se miran solo los rubros con presupuesto: desvío = efecto precios + desvío propio
+  const preCon=conPre.reduce((s,f)=>s+f.pre,0), totPropio=conPre.reduce((s,f)=>s+f.propio,0);
+  const efectoCon=conPre.reduce((s,f)=>s+f.efecto,0);
+  return {base, ultimo:gral.ultimo, provisorio, filas, totRealBase, totEfecto, totPropio, efectoCon, preCon,
+    desvCon: efectoCon+totPropio, totPropioPct: preCon>0?totPropio/preCon*100:null};
 }
 
 /* ---------- Proyección de caja ---------- */
@@ -1213,6 +1331,7 @@ const Acceso = {
     this.error='';
     document.body.classList.remove('bloqueado');
     $('#login').innerHTML='';
+    Indices.actualizar();   // toma la copia guardada al instante y, si está vieja, pide la nueva en segundo plano
     render();
   }
 };
@@ -2038,6 +2157,7 @@ function formObra(o){
       {k:'metaRoi', l:'Meta de rentabilidad (ROI %)', t:'number', hint:'Retorno objetivo sobre el costo invertido. Dejalo en 0 si no querés fijar una meta para esta obra.'},
       {k:'ubicacion', l:'Ubicación'},
       {k:'fechaAceptacion', l:'Fecha de aceptación', t:'date', hint:'Arranca el reloj de la obra'},
+      {k:'fechaPresupuesto', l:'Fecha del presupuesto', t:'date', hint:'A precios de qué mes se armó el presupuesto de costos. Vacío = la fecha de aceptación. Se usa para descontar la suba del ICC.'},
       {k:'fechaEntregaPrev', l:'Entrega prevista', t:'date'},
       {k:'fechaEntrega', l:'Entrega real', t:'date', hint:'Dejar vacío si todavía no se entregó'},
       {k:'condPago', l:'Condición de pago pactada', ph:'Ej: 30% adelanto, saldo a 30 días'},
@@ -2107,7 +2227,89 @@ function obraPlan(o,a){
       emptyTitle:'Sin presupuesto por rubro', emptyText:'Cargá cuánto pensabas gastar en materiales, mano de obra, subcontratos, etc. Después el sistema compara contra lo que gastaste de verdad.',
       foot:[{v:'Totales'},{v:money(c.totPre),cls:'num'},{v:money(c.totReal),cls:'num'},{v:(c.desv>0?'+':'')+money(c.desv),cls:'num '+(c.desv>0?'neg':'pos')},{v:c.desvPct!=null?pct(c.desvPct):'—',cls:'num'},{v:''},{v:''}]})}
   </div>
+  ${bloqueICC(o,c)}
   <div class="card"><div class="card-h"><h2>Consumo de cada rubro</h2></div><div class="card-b">${hbars(bars)}</div></div>`;
+}
+
+const masMoney = v => (v>0?'+':'')+money(v);
+const masPct = v => v==null ? '—' : (v>0?'+':'')+pct(v);
+// Mensaje cuando todavía no hay índices: cargando, error del servicio o el motivo que pase quien llama
+function avisoIndices(motivo){
+  if(Indices.pedido && !Indices.datos) return '<p class="mini">Cargando índices del INDEC…</p>';
+  if(Indices.error && !Indices.datos) return `<p class="mini">${esc(Indices.error)}</p>`;
+  return `<p class="mini">${esc(motivo)}</p>`;
+}
+
+function bloqueICC(o,c){
+  if(!c.filas.length) return '';
+  const h=`<div class="card-h"><h2>Desvío sin la inflación de la construcción</h2><span class="sub">ICC del INDEC</span></div>`;
+  const x=compararRubrosICC(o,c);
+  if(!x){
+    const motivo = !(o.fechaPresupuesto||o.fechaAceptacion) ? 'Cargá la fecha de aceptación (o la del presupuesto) en "Editar obra" para saber a precios de qué mes está el presupuesto.'
+      : Indices.icc('general') ? 'El ICC del INDEC no tiene dato para el mes del presupuesto.'
+      : 'Todavía no hay índices del INDEC cargados (ver Ajustes).';
+    return `<div class="card" style="margin-bottom:16px">${h}<div class="card-b">${avisoIndices(motivo)}</div></div>`;
+  }
+  let lectura='', cls='';
+  if(x.preCon>0){
+    if(x.totPropio>0){ cls=x.totPropioPct>10?'bad':'warn';
+      lectura=`Aun descontando la suba de precios de la construcción, se gastaron <b>${money(x.totPropio)}</b> (${pct(x.totPropioPct)}) más de lo presupuestado. Eso ya no es inflación: es compra cara, desperdicio, imprevistos o un presupuesto corto.`; }
+    else if(x.desvCon>0){ cls='ok';
+      lectura=`En pesos corrientes la obra se pasó ${money(x.desvCon)} del presupuesto, pero la suba de precios de la construcción explica ${money(x.efectoCon)}. Descontándola, el gasto quedó ${money(-x.totPropio)} por debajo de lo previsto: no es un problema de control de costos.`; }
+    else { cls='ok';
+      lectura=`El gasto quedó dentro del presupuesto incluso en pesos corrientes. Descontando la suba de precios, quedó ${money(-x.totPropio)} por debajo de lo previsto.`; }
+  }
+  return `<div class="card" style="margin-bottom:16px">${h}<div class="card-b">
+    ${x.preCon>0 ? `<div class="grid g4" style="margin-bottom:14px">
+      ${kpi('Desvío en pesos corrientes', masMoney(x.desvCon), pct(x.desvCon/x.preCon*100)+' sobre lo presupuestado', x.desvCon>0?'neg':'pos')}
+      ${kpi('Por suba de precios (ICC)', masMoney(x.efectoCon), 'Inflación del sector, no depende de la empresa')}
+      ${kpi('Desvío propio', masMoney(x.totPropio), masPct(x.totPropioPct)+' sobre lo presupuestado', x.totPropio>0?'neg':'pos','acc')}
+      ${kpi('Gasto a precios del presupuesto', money(x.totRealBase), 'Pesos de '+monthLabel(x.base))}
+    </div>
+    <div class="big-note ${cls}" style="margin-bottom:14px">${lectura}</div>`
+    : '<p class="mini" style="margin-bottom:12px">Cargá el monto presupuestado de cada rubro para separar la suba de precios del desvío propio.</p>'}
+    ${table([
+      {h:'Rubro', v:r=>`<span style="font-weight:600">${esc(r.rubro)}</span>`},
+      {h:'Índice', v:r=>`<span class="chip">${esc(ICC_NOMBRE[r.clave])}</span>`},
+      {h:'Suba desde el presupuesto', num:1, v:r=>masPct(r.suba)},
+      {h:'Real', num:1, v:r=>money(r.real)},
+      {h:'Real a precios del presupuesto', num:1, v:r=>money(r.realBase)},
+      {h:'Presupuestado', num:1, v:r=>r.pre?money(r.pre):'—'},
+      {h:'Desvío propio', num:1, v:r=>r.propio!=null?masMoney(r.propio):'—', cls:r=>r.propio!=null?(r.propio>0?'neg':'pos'):''},
+      {h:'Desvío propio %', num:1, v:r=>masPct(r.propioPct), cls:r=>r.propioPct!=null?(r.propioPct>0?'neg':'pos'):''}
+    ], x.filas)}
+    <p class="mini" style="margin-top:10px">Presupuesto a precios de ${monthLabel(x.base)}${o.fechaPresupuesto?'':' (fecha de aceptación)'}. Cada costo se lleva a ese mes con el ICC de su fecha:
+      materiales y mano de obra con su capítulo del ICC, el resto de los rubros con el nivel general. El ICC mide Gran Buenos Aires.
+      Último dato publicado: ${monthLabel(x.ultimo)}${x.provisorio?'; los costos de meses posteriores se toman con ese índice y el número puede cambiar un poco':''}.</p>
+  </div></div>`;
+}
+
+// Tarjeta "En términos reales": lo que dejó la obra una vez descontada la inflación (IPC del INDEC)
+function bloqueReal(o,a,r=obraReal(o,a)){
+  const h=`<div class="card-h"><h2>En términos reales</h2><span class="sub">descontando la inflación · IPC del INDEC</span></div>`;
+  if(!r) return `<div class="card" style="margin-bottom:16px">${h}<div class="card-b">${avisoIndices(a.flows.length
+    ? 'Todavía no hay índices del INDEC cargados (ver Ajustes).' : 'Cargá cobros y pagos con fecha para calcular el margen real.')}</div></div>`;
+  let lectura='', cls='ok';
+  if(r.roiR!=null && r.roiN!=null){
+    lectura=`En pesos de cada día la obra dio <b>${pct(r.roiN)}</b> de ROI; descontando la inflación quedó en <b>${pct(r.roiR)}</b>`
+      + (r.perdida>0.05 ? `: la inflación se llevó ${r.perdida.toFixed(1).replace('.',',')} puntos.` : '.');
+    if(a.metaRoi>0) lectura+=` La meta de ${pct(a.metaRoi,0)} ${r.metaCumplida?'se cumple también en términos reales.':'<b>no se cumple</b> en términos reales.'}`;
+    if(r.margenR<0){ cls='bad'; lectura+=' En términos reales la obra perdió plata: lo cobrado vale menos que lo que se gastó.'; }
+    else if(r.metaCumplida===false || (r.perdida!=null && r.perdida>r.roiR)) cls='warn';
+  } else { cls=''; lectura='Faltan cobros o costos para comparar el ROI nominal con el real.'; }
+  const notas=[];
+  if(r.provisorio) notas.push(`Hay movimientos de meses que el INDEC todavía no publicó: se toman con el IPC de ${monthLabel(r.base)} y el resultado puede cambiar un poco.`);
+  if(r.sinDato) notas.push(`${r.sinDato} movimiento${r.sinDato>1?'s son anteriores':' es anterior'} al inicio de la serie del IPC y no se incluye${r.sinDato>1?'n':''}.`);
+  return `<div class="card" style="margin-bottom:16px">${h}<div class="card-b">
+    <div class="grid g4" style="margin-bottom:14px">
+      ${kpi('Margen real', money(r.margenR), 'Pesos de '+monthLabel(r.base), sign(r.margenR),'acc')}
+      ${kpi('ROI real', r.roiR!=null?pct(r.roiR):'—', r.roiN!=null?'Nominal '+pct(r.roiN):'—', a.metaRoi>0&&r.metaCumplida!=null?(r.metaCumplida?'pos':'neg'):sign(r.roiR))}
+      ${kpi('TIR real anual', r.tirR!=null?pct(r.tirR*100):'—', r.tirR!=null?(r.tirR>0?'Le gana a la inflación':'No le gana a la inflación'):(a.tirNota||'—'), r.tirR!=null?sign(r.tirR):'')}
+      ${kpi('Inflación durante la obra', pct(r.inflacion), `${monthLabel(r.mIni)} a ${monthLabel(r.mFin)} · IPC ${esc(r.region)}`)}
+    </div>
+    <div class="big-note ${cls}">${lectura}</div>
+    ${notas.length?`<p class="mini" style="margin-top:10px">${notas.join(' ')}</p>`:''}
+  </div></div>`;
 }
 
 function formPlan(p,obraId){
@@ -2148,6 +2350,8 @@ function obraResumen(o,a){
   </div>
 
   ${metaBanner(a)}
+
+  ${bloqueReal(o,a)}
 
   <div class="card" style="margin-bottom:16px">
     <div class="card-h"><h2>Línea de tiempo de la obra</h2><span class="sub">hitos, cobros y pagos</span></div>
@@ -2234,6 +2438,7 @@ function obraDash(o,a){
   const fijoDia = totalFijoMensual()/30;
   const cargaFija = a.plazoEjec!=null ? fijoDia*a.plazoEjec : null;
   const margenNeto = cargaFija!=null ? a.margen-cargaFija : null;
+  const real = obraReal(o,a);
 
   return `
   <div class="grid g4" style="margin-bottom:16px">
@@ -2266,6 +2471,8 @@ function obraDash(o,a){
       ${fila('Margen bruto', `<span class="${sign(a.margen)}">${money(a.margen)}</span>`)}
       ${fila('Rentabilidad sobre venta', a.rent!=null?pct(a.rent):'—')}
       ${fila('Retorno sobre inversión (ROI)', a.roi!=null?pct(a.roi):'—')}
+      ${real?fila('ROI real (sin inflación)', real.roiR!=null?`<span class="${sign(real.roiR)}">${pct(real.roiR)}</span>`:'—'):''}
+      ${real?fila('TIR real anual', real.tirR!=null?`<span class="${sign(real.tirR)}">${pct(real.tirR*100)}</span>`:'—'):''}
       ${a.metaRoi>0?fila('Meta de rentabilidad (ROI)', pct(a.metaRoi,0)):''}
       ${a.metaRoi>0&&a.brechaRoi!=null?fila('Diferencia vs. la meta', `<span class="${a.metaCumplida?'pos':'neg'}">${a.brechaRoi>=0?'+':''}${pct(a.brechaRoi,1)} · ${a.brechaMonto>=0?'+':''}${money(a.brechaMonto)}</span>`):''}
       ${fila('Estructura absorbida ('+days(a.plazoEjec)+')', cargaFija!=null?money(cargaFija):'—')}
@@ -2936,8 +3143,12 @@ function datosParaIA(inflacion){
       cobertura_costos:c.liquidez!=null?Math.round(c.liquidez*100)/100:null,
       costos_impagos:r0(D().costos.filter(x=>!x.pagado).reduce((s,x)=>s+num(x.monto),0))}),
     mensual: Object.values(meses).sort((a,b)=>a.mes<b.mes?-1:1).slice(-24).map(m=>({mes:m.mes, ingresos:r0(m.ingresos), costos:r0(m.costos)})),
-    obras: D().obras.map(o=>{ const a=analizarObra(o), rb=compararRubros(o);
-      return sinVacios({nombre:o.nombre, cliente:o.cliente, estado:o.estado, aceptacion:o.fechaAceptacion, entrega_prevista:o.fechaEntregaPrev,
+    obras: D().obras.map(o=>{ const a=analizarObra(o), rb=compararRubros(o), re=obraReal(o,a), icc=compararRubrosICC(o,rb);
+      const real = re ? sinVacios({pesos_de:re.base, margen:r0(re.margenR), roi_pct:r1(re.roiR), tir_pct:re.tirR!=null?r1(re.tirR*100):null,
+        inflacion_durante_obra_pct:r1(re.inflacion)}) : null;
+      const sinICC = icc&&icc.preCon>0 ? sinVacios({precios_de:icc.base, desvio_total:r0(icc.desvCon), por_suba_de_precios:r0(icc.efectoCon),
+        desvio_propio:r0(icc.totPropio), desvio_propio_pct:r1(icc.totPropioPct)}) : null;
+      return sinVacios({real, desvio_costos_sin_inflacion_icc:sinICC,nombre:o.nombre, cliente:o.cliente, estado:o.estado, aceptacion:o.fechaAceptacion, entrega_prevista:o.fechaEntregaPrev,
         entrega_real:o.fechaEntrega, presupuesto:r0(a.presup), cobrado:r0(a.cobrado), costo:r0(a.costoTot), margen:r0(a.margen),
         rentabilidad_pct:r1(a.rent), roi_pct:r1(a.roi), meta_roi_pct:a.metaRoi||null, van:r0(a.van), tir_pct:a.tir!=null?r1(a.tir*100):null,
         atraso_dias:a.atraso, desvio_facturacion_pct:r1(a.desvio), adelanto_pct:r1(a.pctAdelanto), por_cobrar:r0(a.cobrable),
@@ -3346,6 +3557,8 @@ function vConfig(){
     </div></div>
   </div>
 
+  ${cardIndices()}
+
   <div class="card" style="margin-top:16px"><div class="card-h"><h2>Sesión y nube</h2>
     <span class="chip ${Cloud.estado==='conectado'?'g':Cloud.estado==='error'?'r':''}">${Cloud.estado==='conectado'?'Sincronizado':Cloud.estado==='error'?'Error de conexión':'Guardando…'}</span></div>
     <div class="card-b">
@@ -3403,9 +3616,37 @@ function vConfig(){
   $('#demoDel')?.addEventListener('click', ()=>confirmDel('Se borrarán solo las obras, movimientos, vehículos y gastos de ejemplo, para todos los usuarios. Los datos reales quedan como están.',borrarDemo,
     {titulo:'Borrar datos de ejemplo', boton:'Borrar ejemplo', nota:''}));
 
+  $('#idxAct').onclick=()=>{ Indices.actualizar(true); render(); };
+  $('#idxReg')?.addEventListener('change', e=>{ D().config.regionIpc=e.target.value; Store.save(); toast('Región del IPC: '+e.target.value); render(); });
   $('#fbSubir').onclick=()=>Cloud.subir({todo:true});
   $('#fbBajar').onclick=()=>Cloud.bajar({});
   $('#fbSalir').onclick=()=>Cloud.salir();
+}
+
+function cardIndices(){
+  const d=Indices.datos, ipc=Indices.ipc(), icc=Indices.icc('general');
+  const regs=Indices.regiones(), actual=ipc?.region||'Nacional';
+  const estado = Indices.pedido ? ['','Consultando…'] : d ? ['g','Conectado'] : Indices.error ? ['r','Sin conexión'] : ['','Sin datos'];
+  const aperturas = d?.icc ? Object.keys(ICC_NOMBRE).filter(k=>Indices.icc(k)).map(k=>ICC_NOMBRE[k].replace('ICC ','')).join(', ') : '';
+  return `<div class="card" style="margin-top:16px"><div class="card-h"><h2>Índices oficiales (INDEC)</h2>
+    <span class="chip ${estado[0]}">${estado[1]}</span></div>
+    <div class="card-b">
+    <p style="font-size:12.5px;color:var(--muted);margin-bottom:12px;max-width:75ch">
+      Con el IPC el sistema calcula el margen, el ROI y la TIR de cada obra en términos reales. Con el índice del costo de la construcción (ICC)
+      separa, en "Presupuesto vs real", cuánto del desvío fue suba de precios del sector y cuánto es propio. Se actualizan solos.</p>
+    <table><tbody>
+      ${fila('IPC: último mes publicado', ipc?monthLabel(ipc.s.ultimo):'—')}
+      ${fila('ICC: último mes publicado', icc?monthLabel(icc.ultimo):'—')}
+      ${aperturas?fila('Aperturas del ICC', esc(aperturas)):''}
+      ${fila('Consultado', Indices.t?new Date(Indices.t).toLocaleString('es-AR'):'—')}
+    </tbody></table>
+    ${regs.length>1?`<label class="fld" style="margin-top:12px;max-width:340px"><span>Región del IPC</span>
+      <select id="idxReg">${regs.map(r=>`<option ${r===actual?'selected':''}>${esc(r)}</option>`).join('')}</select>
+      <div class="hint">Usá la región donde están las obras y gasta la empresa. Vale para todos los usuarios.</div></label>`:''}
+    ${Indices.error?`<p class="mini" style="margin-top:10px;color:var(--rojo)">${esc(Indices.error)}</p>`:''}
+    ${(d?.avisos||[]).length?`<p class="mini" style="margin-top:10px">${d.avisos.map(esc).join(' · ')}</p>`:''}
+    <div class="row" style="margin-top:12px"><button class="btn" id="idxAct" ${Indices.pedido?'disabled':''}>Actualizar ahora</button></div>
+  </div></div>`;
 }
 
 function exportar(sufijo, datos=Store.data){
